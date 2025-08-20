@@ -683,81 +683,76 @@ class ProgressManager(QMainWindow):
             subtask_series.append(series)
         
         # 按日期填充数据
-        prev_total = 0
-        prev_subtask_values = [0] * len(self.current_task.sub_tasks)
+        # 初始化当前进度数组（用于增量模式和总量模式）
+        current_subtask_progress = [0] * len(self.current_task.sub_tasks)
         
-        # 初始化当前进度值数组（用于总量模式）
-        if chart_mode == "总量模式":
-            current_subtask_progress = [0] * len(self.current_task.sub_tasks)
-        else:
-            current_subtask_progress = None
-        
-        # 用于增量模式下计算Y轴范围
-        max_increment_value = 0
-        
-        for date in sorted_dates:
-            date_obj = datetime.strptime(date, "%Y-%m-%d")
-            timestamp = date_obj.timestamp() * 1000
+        if chart_mode == "增量模式":
+            # 初始化前一个总进度和子任务进度
+            prev_total_progress = 0
+            prev_subtask_progress = [0] * len(self.current_task.sub_tasks)
+            max_increment_value = 0
             
-            if chart_mode == "增量模式":
-                # 计算任务总进度（增量模式：基于当天记录）
-                total_completed = 0
-                total_required = 0
-                for subtask in self.current_task.sub_tasks:
-                    if date in subtask.records:
-                        total_completed += min(subtask.records[date], subtask.total)
-                    total_required += subtask.total
+            for date in sorted_dates:
+                date_obj = datetime.strptime(date, "%Y-%m-%d")
+                timestamp = date_obj.timestamp() * 1000
                 
-                total_progress = (total_completed / total_required * 100) if total_required > 0 else 0
-                
-                total_delta = total_progress - prev_total
-                total_series.append(timestamp, max(0, total_delta))
-                prev_total = total_progress
-                
-                # 更新最大值
-                max_increment_value = max(max_increment_value, max(0, total_delta))
-            else:
-                # 总量模式：更新每个子任务的当前进度值
+                # 更新当前进度：对于每个子任务，如果当天有记录，则更新进度
                 for i, subtask in enumerate(self.current_task.sub_tasks):
                     if date in subtask.records:
                         current_subtask_progress[i] = min(subtask.records[date], subtask.total)
+                
+                # 计算总完成量和总量
+                total_completed = sum(current_subtask_progress)
+                total_required = sum(subtask.total for subtask in self.current_task.sub_tasks)
+                total_progress = (total_completed / total_required * 100) if total_required > 0 else 0
+                
+                # 计算总进度增量
+                total_delta = total_progress - prev_total_progress
+                total_series.append(timestamp, max(0, total_delta))
+                prev_total_progress = total_progress
+                
+                # 更新最大值
+                max_increment_value = max(max_increment_value, max(0, total_delta))
+                
+                # 对于每个子任务，计算增量
+                for i, subtask in enumerate(self.current_task.sub_tasks):
+                    # 当前进度百分比
+                    subtask_percent = (current_subtask_progress[i] / subtask.total * 100) if subtask.total > 0 else 0
+                    delta = subtask_percent - prev_subtask_progress[i]
+                    delta_value = max(0, delta)
+                    subtask_series[i].append(timestamp, delta_value)
+                    prev_subtask_progress[i] = subtask_percent
+                    max_increment_value = max(max_increment_value, delta_value)
+            
+            # 设置Y轴范围
+            upper_bound = max_increment_value * 1.2 if max_increment_value > 0 else 10
+            axisY.setRange(0, upper_bound)
+            axisY.setTickCount(6)
+        else:
+            # 总量模式
+            for date in sorted_dates:
+                date_obj = datetime.strptime(date, "%Y-%m-%d")
+                timestamp = date_obj.timestamp() * 1000
+                
+                # 更新每个子任务的当前进度值
+                for i, subtask in enumerate(self.current_task.sub_tasks):
+                    if date in subtask.records:
+                        current_subtask_progress[i] = min(subtask.records[date], subtask.total)
+                
                 total_completed = sum(current_subtask_progress)
                 total_required = sum(subtask.total for subtask in self.current_task.sub_tasks)
                 total_progress = (total_completed / total_required * 100) if total_required > 0 else 0
                 total_series.append(timestamp, total_progress)
-            
-            # 计算子任务进度
-            for i, subtask in enumerate(self.current_task.sub_tasks):
-                if chart_mode == "增量模式":
-                    progress = 0
-                    if date in subtask.records:
-                        progress = min(subtask.records[date], subtask.total)
-                    percent = (progress / subtask.total * 100) if subtask.total > 0 else 0
-                    
-                    delta = percent - prev_subtask_values[i]
-                    delta_value = max(0, delta)
-                    subtask_series[i].append(timestamp, delta_value)
-                    prev_subtask_values[i] = percent
-                    
-                    # 更新最大值
-                    max_increment_value = max(max_increment_value, delta_value)
-                else:
-                    # 总量模式：使用当前进度值
+                
+                # 计算子任务进度
+                for i, subtask in enumerate(self.current_task.sub_tasks):
                     progress = current_subtask_progress[i]
                     percent = (progress / subtask.total * 100) if subtask.total > 0 else 0
                     subtask_series[i].append(timestamp, percent)
-        
-        # 设置Y轴范围
-        if chart_mode == "增量模式":
-            # 自适应Y轴范围，上界为最大值的1.2倍
-            upper_bound = max_increment_value * 1.2 if max_increment_value > 0 else 10
-            axisY.setRange(0, upper_bound)
-            # 设置刻度数为6（包括0和最大值）
-            axisY.setTickCount(6)
-        else:
+            
             # 总量模式下保持0-100的范围
             axisY.setRange(0, 100)
-            axisY.setTickCount(11)  # 0-100% 每10%一个刻度
+            axisY.setTickCount(11)
         
         # 添加到图表
         chart.addSeries(total_series)
@@ -774,10 +769,10 @@ class ProgressManager(QMainWindow):
         # 设置图表视图
         self.chart_view.setChart(chart)
         
-        # 添加数据点标签 - 在图表设置后执行
-        # 使用QTimer延迟执行，确保图表已经完全渲染
+        # 添加数据点标签
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(100, self.add_data_labels)
+
     
     def add_data_labels(self):
         """添加数据点标签到图表"""
