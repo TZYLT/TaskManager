@@ -7,9 +7,9 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QLabel, QProgressBar, QPushButton, QStackedWidget, QLineEdit, QFormLayout, QMenu,
     QAction, QMessageBox, QGroupBox, QComboBox, QDateEdit, QSpinBox, QInputDialog, QGraphicsSimpleTextItem,
-    QDialog, QDialogButtonBox, QShortcut
+    QDialog, QDialogButtonBox, QShortcut, QAbstractItemView, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtCore import Qt, QDate, QSize
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 from PyQt5.QtGui import QColor, QPainter, QKeySequence
 
@@ -294,6 +294,59 @@ class TaskCard(QWidget):
         self.days_info.setText(days_text)
         self.days_info.setStyleSheet(f"font-size: {scaled_font_size(14)}px; color: #000;")
 
+# --- 新增：子任务卡片，显式提供合理的 sizeHint，确保选中框能完整包裹内容 ---
+class SubTaskCard(QWidget):
+    def __init__(self, subtask: SubTask, parent=None):
+        super().__init__(parent)
+        self.subtask = subtask
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(scaled_size(12), scaled_size(8), scaled_size(12), scaled_size(10))
+        layout.setSpacing(scaled_size(8))
+
+        self.name_label = QLabel(subtask.name)
+        self.name_label.setStyleSheet(
+            f"font-family: \"黑体\", sans-serif; font-weight: bold; font-size: {scaled_font_size(14)}px;"
+        )
+        self.name_label.setWordWrap(True)
+
+        progress = (subtask.completed / subtask.total * 100) if subtask.total > 0 else 0
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(round(progress))
+        self.progress_bar.setFormat(f"{progress:.2f}% ({subtask.completed}/{subtask.total})")
+        # 稍微加高，便于触控与可读性
+        self.progress_bar.setFixedHeight(scaled_size(26))
+        self.progress_bar.setStyleSheet(
+            f"QProgressBar {{ font-size: {scaled_font_size(13)}px; height: {scaled_size(26)}px; }}"
+        )
+
+        layout.addWidget(self.name_label)
+        layout.addWidget(self.progress_bar)
+
+        # 让 QListWidget 的选中高亮透出（本卡片背景透明）
+        self.setStyleSheet("background: transparent;")
+
+        # 调整尺寸策略，保证以内容高度为准
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+
+    def update_subtask(self, subtask: SubTask):
+        self.subtask = subtask
+        self.name_label.setText(subtask.name)
+        progress = (subtask.completed / subtask.total * 100) if subtask.total > 0 else 0
+        self.progress_bar.setValue(round(progress))
+        self.progress_bar.setFormat(f"{progress:.2f}% ({subtask.completed}/{subtask.total})")
+        self.updateGeometry()
+
+    def sizeHint(self):
+        # 显式返回足够的高度，确保选中框覆盖 name + progress + 内边距
+        name_h = self.name_label.sizeHint().height()
+        pb_h = max(self.progress_bar.sizeHint().height(), scaled_size(26))
+        margins = scaled_size(8) + scaled_size(10) + scaled_size(8)  # top + bottom + 中间间距
+        h = name_h + pb_h + margins + scaled_size(6)  # 额外余量
+        # 宽度可交给视图自行计算
+        return QSize(scaled_size(300), h)
 
 class ProgressManager(QMainWindow):
     def __init__(self):
@@ -503,12 +556,24 @@ class ProgressManager(QMainWindow):
         """)
         self.task_info_label.setStyleSheet(f"font-size: {scaled_font_size(14)}px; color: #555;")
         self.subtask_list_label.setStyleSheet(f"font-size: {scaled_font_size(16)}px; font-weight: bold;")
+        # 关键：子任务列表的选中高亮更明显 + 行距更大，避免选中框过小
         self.subtask_list.setStyleSheet(f"""
             QListWidget {{
                 background-color: #f8f9fa; border: 1px solid #dee2e6;
                 border-radius: 8px; font-size: {scaled_font_size(14)}px;
             }}
+            QListWidget::item {{
+                padding: {scaled_size(6)}px {scaled_size(8)}px;
+            }}
+            QListWidget::item:selected {{
+                background-color: #d0e7ff; /* 更明显的选中底色 */
+                border-radius: {scaled_size(6)}px;
+            }}
         """)
+        self.subtask_list.setSpacing(scaled_size(6))
+        self.subtask_list.setUniformItemSizes(False)
+        self.subtask_list.setSelectionMode(QAbstractItemView.SingleSelection)
+
         self.progress_group.setStyleSheet(f"QGroupBox {{ font-size: {scaled_font_size(16)}px; font-weight: bold; }}")
         self.subtask_name_label.setStyleSheet(f"font-size: {scaled_font_size(14)}px;")
         self.date_edit.setStyleSheet(f"font-size: {scaled_font_size(14)}px;")
@@ -671,11 +736,12 @@ class ProgressManager(QMainWindow):
             f"预计完成: {self.current_task.estimated_date}"
         )
         
-        # 更新子任务列表
+        # 更新子任务列表（使用 SubTaskCard，显式设置足够的 sizeHint）
         self.subtask_list.clear()
         for subtask in self.current_task.sub_tasks:
             item = QListWidgetItem()
-            widget = self.create_subtask_card(subtask)
+            widget = SubTaskCard(subtask)
+            # 关键：使用卡片的 sizeHint 确定行高，确保选中框覆盖全部组件
             item.setSizeHint(widget.sizeHint())
             self.subtask_list.addItem(item)
             self.subtask_list.setItemWidget(item, widget)
@@ -685,36 +751,6 @@ class ProgressManager(QMainWindow):
         
         # 刷新当前任务卡片
         self.refresh_current_task_card()
-    
-    def create_subtask_card(self, subtask):
-        widget = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(
-            scaled_size(10), scaled_size(5), scaled_size(10), scaled_size(5)
-        )
-        
-        # 子任务名称
-        name_label = QLabel(subtask.name)
-        name_label.setStyleSheet(f"font-family: \"黑体\", sans-serif; font-weight: bold; font-size: {scaled_font_size(14)}px;")
-        layout.addWidget(name_label)
-        
-        # 进度条
-        progress = (subtask.completed / subtask.total * 100) if subtask.total > 0 else 0
-        progress_bar = QProgressBar()
-        progress_bar.setRange(0, 100)
-        progress_bar.setValue(round(progress))
-        progress_bar.setFormat(f"{progress:.2f}% ({subtask.completed}/{subtask.total})")
-        progress_bar.setStyleSheet(f"""
-            QProgressBar {{
-                font-size: {scaled_font_size(12)}px;
-                height: {scaled_size(20)}px;
-            }}
-        """)
-        layout.addWidget(progress_bar)
-        
-        widget.setLayout(layout)
-        widget.setMinimumHeight(scaled_size(60))
-        return widget
     
     def on_subtask_selected(self):
         selected_items = self.subtask_list.selectedItems()
