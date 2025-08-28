@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QLabel, QProgressBar, QPushButton, QStackedWidget, QLineEdit, QFormLayout, QMenu,
     QAction, QMessageBox, QGroupBox, QComboBox, QDateEdit, QSpinBox, QInputDialog, QGraphicsSimpleTextItem,
-    QDialog, QDialogButtonBox
+    QDialog, QDialogButtonBox, QTextEdit
 )
 from PyQt5.QtCore import Qt, QDate
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
@@ -23,7 +23,8 @@ class SubTask:
     
     @property
     def progress(self):
-        if not self.records: return 0
+        if not self.records:
+            return 0
         last_date = max(self.records.keys())
         return self.records[last_date]
     
@@ -44,8 +45,8 @@ class SubTask:
     
     @classmethod
     def from_dict(cls, data):
-        subtask = cls(data["name"], data["total"], data.get("auto_offset", 0))
-        subtask.records = {k: v for k, v in data["records"].items()}
+        subtask = cls(data["name"], data.get("total", 100), data.get("auto_offset", 0))
+        subtask.records = {k: v for k, v in data.get("records", {}).items()}
         return subtask
 
 class Task:
@@ -79,23 +80,26 @@ class Task:
     @property
     def remaining_days(self):
         """基于最近5天有记录的数据预测剩余天数（忽略无记录日）"""
-        if not self.sub_tasks: 
+        if not self.sub_tasks:
             return 0
         
         # 收集所有子任务记录
         all_records = []
         for st in self.sub_tasks:
             for date, progress in st.records.items():
-                all_records.append((datetime.strptime(date, "%Y-%m-%d"), progress))
+                try:
+                    all_records.append((datetime.strptime(date, "%Y-%m-%d"), progress))
+                except Exception:
+                    continue
         
-        if not all_records: 
+        if not all_records:
             return 0
         
         # 按日期排序
         all_records.sort(key=lambda x: x[0])
         last_date = all_records[-1][0]
         
-        # 获取最近7天有记录的数据（忽略无记录日）
+        # 获取最近5天有记录的数据（忽略无记录日）
         recent_records = []
         for record_date, progress in all_records:
             if (last_date - record_date).days <= 5:
@@ -140,7 +144,6 @@ class Task:
         # 转换日期并排序
         sorted_dates = sorted([datetime.strptime(d, "%Y-%m-%d") for d in all_dates])
         min_date = min(sorted_dates)
-        max_date = max(sorted_dates)
         
         # 确定开始日期（7天前或第一次记录日期）
         start_date = max(min_date, now - timedelta(days=7))
@@ -189,10 +192,10 @@ class Task:
     
     @classmethod
     def from_dict(cls, data):
-        task = cls(data["name"])
-        task.status = data["status"]
+        task = cls(data.get("name", ""))
+        task.status = data.get("status", "进行中")
         task.start_date = data.get("start_date", datetime.now().strftime("%Y-%m-%d"))
-        task.sub_tasks = [SubTask.from_dict(st) for st in data["sub_tasks"]]
+        task.sub_tasks = [SubTask.from_dict(st) for st in data.get("sub_tasks", [])]
         return task
 
 class TaskCard(QWidget):
@@ -213,7 +216,7 @@ class TaskCard(QWidget):
         self.name_label.setWordWrap(True)
         
         self.status_label = QLabel(task.status)
-        self.status_label.setStyleSheet(f"font-family: \"黑体\", sans-serif; color: {Task.STATUS_COLORS[task.status].name()}; font-size: 19px;")
+        self.status_label.setStyleSheet(f"font-family: \"黑体\", sans-serif; color: {Task.STATUS_COLORS.get(task.status, QColor(0,0,0)).name()}; font-size: 19px;")
         
         header_layout.addWidget(self.name_label)
         header_layout.addStretch()
@@ -228,7 +231,7 @@ class TaskCard(QWidget):
             font-size:16px;
             }}
             QProgressBar::chunk {{
-                background-color: {Task.STATUS_COLORS[task.status].name()};
+                background-color: {Task.STATUS_COLORS.get(task.status, QColor(0,0,0)).name()};
             }}
         """)
         
@@ -266,7 +269,7 @@ class TaskCard(QWidget):
         self.task = task
         self.name_label.setText(task.name)
         self.status_label.setText(task.status)
-        self.status_label.setStyleSheet(f"font-family: \"黑体\", sans-serif; color: {Task.STATUS_COLORS[task.status].name()}; font-size: 19px;")
+        self.status_label.setStyleSheet(f"font-family: \"黑体\", sans-serif; color: {Task.STATUS_COLORS.get(task.status, QColor(0,0,0)).name()}; font-size: 19px;")
         self.progress_bar.setValue(round(task.progress))
         self.progress_bar.setFormat(f" {task.progress:.2f}%")
         self.progress_bar.setStyleSheet(f"""
@@ -274,7 +277,7 @@ class TaskCard(QWidget):
             font-size:16px;
             }}
             QProgressBar::chunk {{
-                background-color: {Task.STATUS_COLORS[task.status].name()};
+                background-color: {Task.STATUS_COLORS.get(task.status, QColor(0,0,0)).name()};
             }}
         """)
         
@@ -302,6 +305,8 @@ class ProgressManager(QMainWindow):
                 data = json.load(f)
                 self.tasks = [Task.from_dict(t) for t in data]
         except FileNotFoundError:
+            self.tasks = []
+        except Exception:
             self.tasks = []
     
     def save_data(self):
@@ -370,7 +375,7 @@ class ProgressManager(QMainWindow):
         mode_layout.addWidget(QLabel("显示模式:"))
         mode_layout.addWidget(self.mode_combo)
         
-        # --- 新增：今日总结按钮（放在模式选择旁） ---
+        # 今日总结按钮（放在模式选择旁）
         self.today_summary_btn = QPushButton("今日总结")
         self.today_summary_btn.setToolTip("显示今日有更新的任务总结")
         self.today_summary_btn.setStyleSheet("""
@@ -387,7 +392,6 @@ class ProgressManager(QMainWindow):
         """)
         self.today_summary_btn.clicked.connect(self.show_today_summary)
         mode_layout.addWidget(self.today_summary_btn)
-        # --- 新增结束 ---
         
         mode_layout.addStretch()
         
@@ -458,6 +462,9 @@ class ProgressManager(QMainWindow):
             }
         """)
         self.subtask_list.itemSelectionChanged.connect(self.on_subtask_selected)
+        # 为子任务列表启用右键菜单（最小改动）
+        self.subtask_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.subtask_list.customContextMenuRequested.connect(self.show_subtask_context_menu)
         
         # 进度登记
         self.progress_group = QGroupBox("进度登记")
@@ -521,7 +528,10 @@ class ProgressManager(QMainWindow):
             return
         
         idx = self.task_list.row(selected_items[0])
-        self.current_task = self.tasks[idx]
+        if 0 <= idx < len(self.tasks):
+            self.current_task = self.tasks[idx]
+        else:
+            self.current_task = None
         self.update_detail_view()
     
     def refresh_task_cards(self):
@@ -535,7 +545,8 @@ class ProgressManager(QMainWindow):
     def refresh_current_task_card(self):
         """刷新当前选中的任务卡片"""
         selected_items = self.task_list.selectedItems()
-        if not selected_items: return
+        if not selected_items:
+            return
         
         idx = self.task_list.row(selected_items[0])
         item = self.task_list.item(idx)
@@ -614,9 +625,13 @@ class ProgressManager(QMainWindow):
             return
         
         idx = self.subtask_list.row(selected_items[0])
-        self.current_subtask = self.current_task.sub_tasks[idx]
-        self.subtask_name_label.setText(self.current_subtask.name)
-        self.offset_input.setValue(self.current_subtask.auto_offset)
+        if 0 <= idx < len(self.current_task.sub_tasks):
+            self.current_subtask = self.current_task.sub_tasks[idx]
+            self.subtask_name_label.setText(self.current_subtask.name)
+            self.offset_input.setValue(self.current_subtask.auto_offset)
+        else:
+            self.current_subtask = None
+            self.subtask_name_label.setText("选择子任务")
     
     def register_progress(self):
         if not self.current_task or not self.current_subtask:
@@ -686,7 +701,10 @@ class ProgressManager(QMainWindow):
         # 添加任务总进度
         total_series = QLineSeries()
         total_series.setName("总进度")
-        total_series.setColor(QColor(0, 0, 0))
+        try:
+            total_series.setColor(QColor(0, 0, 0))
+        except Exception:
+            pass
         total_series.setPointsVisible(True)
         
         # 添加子任务进度
@@ -699,16 +717,17 @@ class ProgressManager(QMainWindow):
                 random.randint(50, 200)
             )
             series.setName(subtask.name)
-            series.setColor(color)
+            try:
+                series.setColor(color)
+            except Exception:
+                pass
             series.setPointsVisible(True)
             subtask_series.append(series)
         
         # 按日期填充数据
-        # 初始化当前进度数组（用于增量模式和总量模式）
         current_subtask_progress = [0] * len(self.current_task.sub_tasks)
         
         if chart_mode == "增量模式":
-            # 初始化前一个总进度和子任务进度
             prev_total_progress = 0
             prev_subtask_progress = [0] * len(self.current_task.sub_tasks)
             max_increment_value = 0
@@ -717,27 +736,21 @@ class ProgressManager(QMainWindow):
                 date_obj = datetime.strptime(date, "%Y-%m-%d")
                 timestamp = date_obj.timestamp() * 1000
                 
-                # 更新当前进度：对于每个子任务，如果当天有记录，则更新进度
                 for i, subtask in enumerate(self.current_task.sub_tasks):
                     if date in subtask.records:
                         current_subtask_progress[i] = min(subtask.records[date], subtask.total)
                 
-                # 计算总完成量和总量
                 total_completed = sum(current_subtask_progress)
                 total_required = sum(subtask.total for subtask in self.current_task.sub_tasks)
                 total_progress = (total_completed / total_required * 100) if total_required > 0 else 0
                 
-                # 计算总进度增量
                 total_delta = total_progress - prev_total_progress
                 total_series.append(timestamp, max(0, total_delta))
                 prev_total_progress = total_progress
                 
-                # 更新最大值
                 max_increment_value = max(max_increment_value, max(0, total_delta))
                 
-                # 对于每个子任务，计算增量
                 for i, subtask in enumerate(self.current_task.sub_tasks):
-                    # 当前进度百分比
                     subtask_percent = (current_subtask_progress[i] / subtask.total * 100) if subtask.total > 0 else 0
                     delta = subtask_percent - prev_subtask_progress[i]
                     delta_value = max(0, delta)
@@ -745,17 +758,14 @@ class ProgressManager(QMainWindow):
                     prev_subtask_progress[i] = subtask_percent
                     max_increment_value = max(max_increment_value, delta_value)
             
-            # 设置Y轴范围
             upper_bound = max_increment_value * 1.2 if max_increment_value > 0 else 10
             axisY.setRange(0, upper_bound)
             axisY.setTickCount(6)
         else:
-            # 总量模式
             for date in sorted_dates:
                 date_obj = datetime.strptime(date, "%Y-%m-%d")
                 timestamp = date_obj.timestamp() * 1000
                 
-                # 更新每个子任务的当前进度值
                 for i, subtask in enumerate(self.current_task.sub_tasks):
                     if date in subtask.records:
                         current_subtask_progress[i] = min(subtask.records[date], subtask.total)
@@ -765,13 +775,11 @@ class ProgressManager(QMainWindow):
                 total_progress = (total_completed / total_required * 100) if total_required > 0 else 0
                 total_series.append(timestamp, total_progress)
                 
-                # 计算子任务进度
                 for i, subtask in enumerate(self.current_task.sub_tasks):
                     progress = current_subtask_progress[i]
                     percent = (progress / subtask.total * 100) if subtask.total > 0 else 0
                     subtask_series[i].append(timestamp, percent)
             
-            # 总量模式下保持0-100的范围
             axisY.setRange(0, 100)
             axisY.setTickCount(11)
         
@@ -784,8 +792,11 @@ class ProgressManager(QMainWindow):
         chart.addAxis(axisY, Qt.AlignLeft)
         
         for series in [total_series] + subtask_series:
-            series.attachAxis(axisX)
-            series.attachAxis(axisY)
+            try:
+                series.attachAxis(axisX)
+                series.attachAxis(axisY)
+            except Exception:
+                pass
         
         # 设置图表视图
         self.chart_view.setChart(chart)
@@ -794,7 +805,6 @@ class ProgressManager(QMainWindow):
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(100, self.add_data_labels)
 
-    
     def add_data_labels(self):
         """添加数据点标签到图表"""
         chart = self.chart_view.chart()
@@ -806,7 +816,7 @@ class ProgressManager(QMainWindow):
             return
             
         # 清除现有标签
-        for item in scene.items():
+        for item in list(scene.items()):
             if isinstance(item, QGraphicsSimpleTextItem):
                 scene.removeItem(item)
         
@@ -817,41 +827,34 @@ class ProgressManager(QMainWindow):
             
         # 为每个系列添加标签
         for series in series_list:
-            points = series.pointsVector()
+            try:
+                points = series.pointsVector()
+            except Exception:
+                continue
             for point in points:
-                # 将图表坐标转换为场景坐标
                 scene_point = chart.mapToPosition(point)
-                
-                # 格式化数值为两位小数
                 value_text = f"{point.y():.2f}"
-                
-                # 创建标签
                 label = QGraphicsSimpleTextItem(value_text)
-                
-                # 计算标签位置（数据点右上方）
                 label_x = scene_point.x() + 5
                 label_y = scene_point.y() - 15
-                
-                # 确保标签不会超出图表区域
                 plot_area = chart.plotArea()
                 if label_y < plot_area.top():
-                    label_y = scene_point.y() + 10  # 如果太靠上，放在下方
-                
+                    label_y = scene_point.y() + 10
                 label.setPos(label_x, label_y)
                 label.setBrush(QColor(0, 0, 0))
-                
-                # 设置字体大小
                 font = label.font()
                 font.setPointSize(8)
                 label.setFont(font)
-                
                 scene.addItem(label)
 
     def show_task_context_menu(self, pos):
         item = self.task_list.itemAt(pos)
-        if not item: return
+        if not item:
+            return
         
         idx = self.task_list.row(item)
+        if idx < 0 or idx >= len(self.tasks):
+            return
         task = self.tasks[idx]
         
         menu = QMenu()
@@ -899,10 +902,10 @@ class ProgressManager(QMainWindow):
             self, "添加子任务", "输入子任务名称:"
         )
         if ok and name:
-            total, ok = QInputDialog.getInt(
+            total, ok2 = QInputDialog.getInt(
                 self, "设置总量", "输入任务总量:", value=100
             )
-            if ok:
+            if ok2:
                 task.add_subtask(SubTask(name, total))
                 self.save_data()
                 if task == self.current_task:
@@ -915,7 +918,10 @@ class ProgressManager(QMainWindow):
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
-            self.tasks.remove(task)
+            try:
+                self.tasks.remove(task)
+            except ValueError:
+                pass
             self.save_data()
             self.populate_task_list()
             if task == self.current_task:
@@ -937,7 +943,6 @@ class ProgressManager(QMainWindow):
         summary_lines = []
         
         for task in self.tasks:
-            task_has_update = False
             task_lines = []
             
             # 计算任务整体今日前后的完成量和百分比
@@ -1024,18 +1029,12 @@ class ProgressManager(QMainWindow):
         dlg_layout = QVBoxLayout()
         
         if summary_lines:
-            # 使用 QTextEdit 以便更好地显示格式化文本
-            from PyQt5.QtWidgets import QTextEdit
             text_edit = QTextEdit()
             text_edit.setReadOnly(True)
             
-            # 构建格式化文本
             formatted_text = ""
             for line in summary_lines:
-                if line.strip():  # 非空行
-                    formatted_text += line + "\n"
-                else:  # 空行
-                    formatted_text += "\n"
+                formatted_text += line + "\n"
             
             text_edit.setPlainText(formatted_text.strip())
             dlg_layout.addWidget(text_edit)
@@ -1050,14 +1049,77 @@ class ProgressManager(QMainWindow):
         dlg.resize(700, 500)
         dlg.exec_()
 
+    # ---------------- 新增：子任务右键菜单及处理函数（尽量少改动原代码） ----------------
+    def show_subtask_context_menu(self, pos):
+        """在子任务列表右键时弹出菜单：重命名 / 修改总量 / 删除"""
+        if not self.current_task:
+            return
+        item = self.subtask_list.itemAt(pos)
+        if not item:
+            return
+        idx = self.subtask_list.row(item)
+        if idx < 0 or idx >= len(self.current_task.sub_tasks):
+            return
+        st = self.current_task.sub_tasks[idx]
+        
+        menu = QMenu(self)
+        rename_act = menu.addAction("重命名子任务")
+        change_total_act = menu.addAction("修改任务总量")
+        delete_act = menu.addAction("删除子任务")
+        
+        rename_act.triggered.connect(lambda _, t=self.current_task, i=idx: self.rename_subtask(t, i))
+        change_total_act.triggered.connect(lambda _, t=self.current_task, i=idx: self.change_subtask_total(t, i))
+        delete_act.triggered.connect(lambda _, t=self.current_task, i=idx: self.delete_subtask(t, i))
+        
+        menu.exec_(self.subtask_list.mapToGlobal(pos))
+    
+    def rename_subtask(self, task, idx):
+        """重命名子任务"""
+        try:
+            st = task.sub_tasks[idx]
+        except Exception:
+            return
+        new_name, ok = QInputDialog.getText(self, "重命名子任务", "输入新子任务名称：", text=st.name)
+        if ok and new_name:
+            st.name = new_name
+            self.save_data()
+            if task == self.current_task:
+                self.update_detail_view()
+            self.refresh_task_cards()
+    
+    def change_subtask_total(self, task, idx):
+        """修改子任务总量"""
+        try:
+            st = task.sub_tasks[idx]
+        except Exception:
+            return
+        new_total, ok = QInputDialog.getInt(self, "修改任务总量", "输入新的总量：", value=st.total, min=0)
+        if ok:
+            st.total = new_total
+            self.save_data()
+            if task == self.current_task:
+                self.update_detail_view()
+            self.refresh_task_cards()
+    
+    def delete_subtask(self, task, idx):
+        """删除子任务（带确认）"""
+        try:
+            st = task.sub_tasks[idx]
+        except Exception:
+            return
+        reply = QMessageBox.question(self, "确认删除", f"确定要删除子任务 '{st.name}' 吗？", QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            # 若当前选中是该子任务，清空 current_subtask
+            if self.current_subtask is not None and self.current_subtask == st:
+                self.current_subtask = None
+                self.subtask_name_label.setText("选择子任务")
+            task.sub_tasks.pop(idx)
+            self.save_data()
+            if task == self.current_task:
+                self.update_detail_view()
+            self.refresh_task_cards()
+    # ---------------- 新增结束 ----------------
 
-    def switch_mode(self, index):
-        self.stacked_widget.setCurrentIndex(index)
-        if index == 1:  # 图表模式
-            self.update_chart()
-
-    # (注意：前面定义过 switch_mode，这里保留一个定义以防意外覆盖)
-    # 其余方法保持不变（上文已定义）
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
