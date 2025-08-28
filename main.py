@@ -1012,7 +1012,7 @@ class ProgressManager(QMainWindow):
 
                     # 仅当有“新增”（pages_added>0 或 之前无记录）或任务百分比发生变化时，作为“今日有更新”
                     if pages_added > 0 or abs(percent_after - percent_before) > 1e-6:
-                        line = f"{task.name} - {st.name}：{pages_added}单位，{percent_before:.2f}% -> {percent_after:.2f}%"
+                        line = f"{task.name} - {st.name}：{pages_added}，{percent_before:.2f}% -> {percent_after:.2f}%"
                         summary_lines.append(line)
 
         # 弹窗显示
