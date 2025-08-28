@@ -933,20 +933,25 @@ class ProgressManager(QMainWindow):
 
     # ---------------- 新增：今日总结功能 ----------------
     def show_today_summary(self):
-        """弹出窗口显示今日有更新的任务总结"""
+        """弹出窗口显示今日有更新的任务总结，按指定格式显示"""
         today_str = datetime.now().strftime("%Y-%m-%d")
         summary_lines = []
-
+        
         for task in self.tasks:
-            # 计算任务上次记录（不含今天）的完成量
-            prev_completed = 0
-            new_completed = 0
-
-            # 为了显示每个有今日更新的子任务的信息，我们会遍历子任务
+            task_has_update = False
+            task_lines = []
+            
+            # 计算任务整体今日前后的完成量和百分比
+            total_before = 0
+            total_after = 0
+            
+            # 先收集所有子任务的信息
+            subtask_info = []
             for st in task.sub_tasks:
                 # 今日是否有记录
                 if today_str in st.records:
                     today_val = st.records[today_str]
+                    
                     # 找到此前最新的记录（日期 < today）
                     prev_vals = []
                     for d_str, val in st.records.items():
@@ -956,86 +961,85 @@ class ProgressManager(QMainWindow):
                             continue
                         if d_obj < datetime.strptime(today_str, "%Y-%m-%d"):
                             prev_vals.append((d_obj, val))
+                    
                     if prev_vals:
                         prev_vals.sort(key=lambda x: x[0])
                         prev_val = prev_vals[-1][1]
                     else:
                         prev_val = 0
-
-                    # 计算新增页数（如果为负则按0处理）
-                    pages_added = max(0, today_val - prev_val)
-
-                    # 计算任务整体的百分比：先计算“此前（不含今日）”的完成量和“含今日”完成量
-                    # 收集每个子任务在“此前（不含今日）”的记录值
-                    completed_before = 0
-                    for other in task.sub_tasks:
-                        # other 子任务在今日之前的最新记录
-                        other_prev_vals = []
-                        for d_str, val in other.records.items():
-                            try:
-                                d_obj = datetime.strptime(d_str, "%Y-%m-%d")
-                            except Exception:
-                                continue
-                            if d_obj < datetime.strptime(today_str, "%Y-%m-%d"):
-                                other_prev_vals.append((d_obj, val))
-                        if other_prev_vals:
-                            other_prev_vals.sort(key=lambda x: x[0])
-                            completed_before += min(other_prev_vals[-1][1], other.total)
-                        else:
-                            completed_before += 0
-
-                    # 含今日的完成量（replace today's subtask with today's val)
-                    completed_after = 0
-                    for other in task.sub_tasks:
-                        # 使用最新记录（如果有今日记录则取今日，否则取最新历史）
-                        if today_str in other.records:
-                            completed_after += min(other.records[today_str], other.total)
-                        else:
-                            # 获取最新记录（<= today）
-                            latest_vals = []
-                            for d_str, val in other.records.items():
-                                try:
-                                    d_obj = datetime.strptime(d_str, "%Y-%m-%d")
-                                except Exception:
-                                    continue
-                                if d_obj <= datetime.strptime(today_str, "%Y-%m-%d"):
-                                    latest_vals.append((d_obj, val))
-                            if latest_vals:
-                                latest_vals.sort(key=lambda x: x[0])
-                                completed_after += min(latest_vals[-1][1], other.total)
-                            else:
-                                completed_after += 0
-
-                    total_required = task.total if task.total > 0 else 1
-                    percent_before = (completed_before / total_required * 100)
-                    percent_after = (completed_after / total_required * 100)
-
-                    # 仅当有“新增”（pages_added>0 或 之前无记录）或任务百分比发生变化时，作为“今日有更新”
-                    if pages_added > 0 or abs(percent_after - percent_before) > 1e-6:
-                        line = f"{task.name} - {st.name}：{pages_added}，{percent_before:.2f}% -> {percent_after:.2f}%"
-                        summary_lines.append(line)
-
+                    
+                    # 计算变化量
+                    change = max(0, today_val - prev_val)
+                    
+                    # 计算子任务百分比
+                    prev_percent = (min(prev_val, st.total) / st.total * 100) if st.total > 0 else 0
+                    curr_percent = (min(today_val, st.total) / st.total * 100) if st.total > 0 else 0
+                    
+                    # 累加到任务总量
+                    total_before += min(prev_val, st.total)
+                    total_after += min(today_val, st.total)
+                    
+                    # 只有当有实际变化时才记录子任务
+                    if change > 0 or abs(curr_percent - prev_percent) > 1e-6:
+                        subtask_info.append({
+                            'name': st.name,
+                            'change': change,
+                            'prev_percent': prev_percent,
+                            'curr_percent': curr_percent
+                        })
+            
+            # 计算任务整体百分比
+            total_required = task.total if task.total > 0 else 1
+            total_prev_percent = (total_before / total_required * 100)
+            total_curr_percent = (total_after / total_required * 100)
+            total_change = total_after - total_before
+            
+            # 检查任务是否有更新（有子任务更新或总量变化）
+            if subtask_info or total_change > 0 or abs(total_curr_percent - total_prev_percent) > 1e-6:
+                # 添加任务行
+                task_line = f"{task.name} : {total_change}, {total_prev_percent:.2f}% -> {total_curr_percent:.2f}%"
+                task_lines.append(task_line)
+                
+                # 添加子任务行（缩进显示）
+                for info in subtask_info:
+                    subtask_line = f"    {info['name']} : {info['change']}, {info['prev_percent']:.2f}% -> {info['curr_percent']:.2f}%"
+                    task_lines.append(subtask_line)
+                
+                summary_lines.extend(task_lines)
+                summary_lines.append("")  # 空行分隔不同任务
+        
         # 弹窗显示
         dlg = QDialog(self)
         dlg.setWindowTitle("今日总结")
         dlg_layout = QVBoxLayout()
+        
         if summary_lines:
-            list_widget = QListWidget()
-            for ln in summary_lines:
-                list_widget.addItem(ln)
-            dlg_layout.addWidget(list_widget)
+            # 使用 QTextEdit 以便更好地显示格式化文本
+            from PyQt5.QtWidgets import QTextEdit
+            text_edit = QTextEdit()
+            text_edit.setReadOnly(True)
+            
+            # 构建格式化文本
+            formatted_text = ""
+            for line in summary_lines:
+                if line.strip():  # 非空行
+                    formatted_text += line + "\n"
+                else:  # 空行
+                    formatted_text += "\n"
+            
+            text_edit.setPlainText(formatted_text.strip())
+            dlg_layout.addWidget(text_edit)
         else:
             dlg_layout.addWidget(QLabel("今日没有更新"))
-
+        
         btns = QDialogButtonBox(QDialogButtonBox.Close)
         btns.rejected.connect(dlg.reject)
-        btns.accepted.connect(dlg.accept)
-        btns.clicked.connect(lambda btn: dlg.reject() if btn.text() == "Close" or btn.standardButton(btn) == QDialogButtonBox.Close else None)
         dlg_layout.addWidget(btns)
+        
         dlg.setLayout(dlg_layout)
-        dlg.resize(600, 400)
+        dlg.resize(700, 500)
         dlg.exec_()
-    # ---------------- 今日总结结束 ----------------
+
 
     def switch_mode(self, index):
         self.stacked_widget.setCurrentIndex(index)
