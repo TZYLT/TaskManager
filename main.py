@@ -931,7 +931,6 @@ class ProgressManager(QMainWindow):
             self.save_data()
             self.populate_task_list()
 
-    # ---------------- 新增：今日总结功能 ----------------
     def show_today_summary(self):
         """弹出窗口显示今日有更新的任务总结，按指定格式显示"""
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -942,43 +941,54 @@ class ProgressManager(QMainWindow):
             task_lines = []
             
             # 计算任务整体今日前后的完成量和百分比
-            total_before = 0
-            total_after = 0
+            total_before = 0  # 今日之前的最新记录之和
+            total_after = 0   # 包含今日的最新记录之和
             
-            # 先收集所有子任务的信息
+            # 收集所有子任务的信息
             subtask_info = []
+            
             for st in task.sub_tasks:
-                # 今日是否有记录
-                if today_str in st.records:
-                    today_val = st.records[today_str]
-                    
-                    # 找到此前最新的记录（日期 < today）
-                    prev_vals = []
-                    for d_str, val in st.records.items():
-                        try:
-                            d_obj = datetime.strptime(d_str, "%Y-%m-%d")
-                        except Exception:
-                            continue
+                # 获取今日之前的最新记录
+                prev_records = []
+                for d_str, val in st.records.items():
+                    try:
+                        d_obj = datetime.strptime(d_str, "%Y-%m-%d")
                         if d_obj < datetime.strptime(today_str, "%Y-%m-%d"):
-                            prev_vals.append((d_obj, val))
-                    
-                    if prev_vals:
-                        prev_vals.sort(key=lambda x: x[0])
-                        prev_val = prev_vals[-1][1]
-                    else:
-                        prev_val = 0
-                    
-                    # 计算变化量
-                    change = max(0, today_val - prev_val)
-                    
-                    # 计算子任务百分比
-                    prev_percent = (min(prev_val, st.total) / st.total * 100) if st.total > 0 else 0
-                    curr_percent = (min(today_val, st.total) / st.total * 100) if st.total > 0 else 0
-                    
-                    # 累加到任务总量
-                    total_before += min(prev_val, st.total)
-                    total_after += min(today_val, st.total)
-                    
+                            prev_records.append((d_obj, val))
+                    except Exception:
+                        continue
+                
+                prev_val = 0
+                if prev_records:
+                    prev_records.sort(key=lambda x: x[0])
+                    prev_val = prev_records[-1][1]
+                
+                # 获取包含今日的最新记录
+                all_records = []
+                for d_str, val in st.records.items():
+                    try:
+                        d_obj = datetime.strptime(d_str, "%Y-%m-%d")
+                        if d_obj <= datetime.strptime(today_str, "%Y-%m-%d"):
+                            all_records.append((d_obj, val))
+                    except Exception:
+                        continue
+                
+                curr_val = prev_val  # 默认使用之前的值
+                if all_records:
+                    all_records.sort(key=lambda x: x[0])
+                    curr_val = all_records[-1][1]
+                
+                # 计算子任务百分比
+                prev_percent = (min(prev_val, st.total) / st.total * 100) if st.total > 0 else 0
+                curr_percent = (min(curr_val, st.total) / st.total * 100) if st.total > 0 else 0
+                
+                # 累加到任务总量
+                total_before += min(prev_val, st.total)
+                total_after += min(curr_val, st.total)
+                
+                # 检查子任务是否有今日更新
+                if today_str in st.records:
+                    change = max(0, st.records[today_str] - prev_val)
                     # 只有当有实际变化时才记录子任务
                     if change > 0 or abs(curr_percent - prev_percent) > 1e-6:
                         subtask_info.append({
