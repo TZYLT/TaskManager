@@ -366,17 +366,16 @@ class ProgressManager(QMainWindow):
         self.current_task = None
         self.current_subtask = None
         self.data_file = "tasks.json"
-        self.config_file = "config.json"
         # recent_x 控制“取最近 x 次记录”用于剩余天数估算
         self.recent_x = Task.RECENT_X  # 默认值与 Task 保持一致
 
-        # 先加载配置（以便 RECENT_X 可用）
+        # 加载 recent_x（如果 tasks.json 中保存了）
         self.load_config()
 
         # 添加全屏快捷键
         self.fullscreen_shortcut = QShortcut(QKeySequence("F11"), self)
         self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
-
+        
         self.load_data()
         self.init_ui()
     
@@ -423,44 +422,67 @@ class ProgressManager(QMainWindow):
         self.update_detail_view()
         self.update_chart()
 
-    # ---------- 配置持久化 ----------
+    # ---------- 配置持久化（把 recent_x 存到 tasks.json） ----------
     def load_config(self):
+        """
+        从 self.data_file (tasks.json) 读取 recent_x（如果存在）。
+        兼容老格式（文件内容为 list）——此时不修改 recent_x。
+        """
         try:
-            with open(self.config_file, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-                self.recent_x = int(cfg.get("recent_x", self.recent_x))
-        except Exception:
-            # 若读取失败则保持默认
-            self.recent_x = getattr(self, "recent_x", Task.RECENT_X)
-        # 将配置同步到 Task.RECENT_X（使 Task.remaining_days 使用此值）
-        try:
-            Task.RECENT_X = int(self.recent_x)
-        except Exception:
-            Task.RECENT_X = Task.RECENT_X
-    
-    def save_config(self):
-        try:
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump({"recent_x": int(self.recent_x)}, f, ensure_ascii=False, indent=2)
-        except Exception:
+            with open(self.data_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    # 新结构：{"recent_x": int, "tasks": [...]}
+                    rx = data.get("recent_x", None)
+                    if rx is not None:
+                        try:
+                            self.recent_x = int(rx)
+                            Task.RECENT_X = int(rx)
+                        except Exception:
+                            pass
+                # 若是 list（旧格式）则不从中读取 recent_x
+        except FileNotFoundError:
+            # 文件不存在，保持默认
             pass
-    
+        except Exception:
+            # 读取失败，保持默认
+            pass
+
+    def save_config(self):
+        """
+        兼容接口：保存配置到 tasks.json（通过 save_data，确保 recent_x 一并写入）。
+        保持该函数以减少对调用处修改。
+        """
+        # save_data 会把 self.recent_x 一并写入 tasks.json
+        self.save_data()
+
     # ---------- 数据加载/保存 ----------
     def load_data(self):
         try:
             with open(self.data_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                self.tasks = [Task.from_dict(t) for t in data]
+                # 兼容两种格式：旧的 list 或 新的 dict 包含 "tasks"
+                if isinstance(data, dict):
+                    tasks_list = data.get("tasks", [])
+                elif isinstance(data, list):
+                    tasks_list = data
+                else:
+                    tasks_list = []
+                self.tasks = [Task.from_dict(t) for t in tasks_list]
         except FileNotFoundError:
             self.tasks = []
         except Exception:
             self.tasks = []
     
     def save_data(self):
-        data = [t.to_dict() for t in self.tasks]
+        # 将 recent_x 一并写入 tasks.json
+        payload = {
+            "recent_x": int(self.recent_x),
+            "tasks": [t.to_dict() for t in self.tasks]
+        }
         try:
             with open(self.data_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+                json.dump(payload, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
     
@@ -1338,7 +1360,8 @@ class ProgressManager(QMainWindow):
             self.recent_x = new_x
             # 同步到 Task.RECENT_X（使所有 Task.remaining_days 使用新值）
             Task.RECENT_X = new_x
-            self.save_config()
+            # 将 recent_x 写入 tasks.json（不再生成独立的 config.json）
+            self.save_data()
 
             # 重新生成左侧任务列表（可能会清除选择），但我们会尝试恢复之前的选择
             self.populate_task_list()
