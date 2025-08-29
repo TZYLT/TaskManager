@@ -171,67 +171,22 @@ class Task:
         remaining_days = max(1, round(remaining / avg_daily))
         return remaining_days
     
-    # 保留 estimated_date 的原有实现（不修改）
     @property
     def estimated_date(self):
-        """基于过去7天记录预测完成日期（包含所有日期）"""
-        # 如果没有子任务，返回N/A
+        """
+        新的预计完成日期计算：
+        - 使用当前的剩余天数 (self.remaining_days)
+        - 返回当前日期 + remaining_days 的日期字符串
+        - 若没有子任务或无法估算剩余天数（<=0），返回 "N/A"
+        注意：不修改 remaining_days 的逻辑，只改变基于该值的完成日期计算。
+        """
         if not self.sub_tasks:
             return "N/A"
-        
-        # 获取当前日期
         now = datetime.now()
-        
-        # 收集所有记录日期
-        all_dates = set()
-        for st in self.sub_tasks:
-            all_dates.update(st.records.keys())
-        
-        # 如果没有记录，返回N/A
-        if not all_dates:
+        rd = self.remaining_days
+        if not rd or rd <= 0:
             return "N/A"
-        
-        # 转换日期并排序
-        sorted_dates = sorted([datetime.strptime(d, "%Y-%m-%d") for d in all_dates])
-        min_date = min(sorted_dates)
-        max_date = max(sorted_dates)
-        
-        # 确定开始日期（7天前或第一次记录日期）
-        start_date = max(min_date, now - timedelta(days=7))
-        
-        # 计算开始日期和结束日期的总完成量
-        start_completion = 0
-        end_completion = 0
-        
-        for st in self.sub_tasks:
-            # 获取开始日期前的最后记录
-            start_records = [p for d, p in st.records.items() 
-                            if datetime.strptime(d, "%Y-%m-%d") <= start_date]
-            start_completion += max(start_records) if start_records else 0
-            
-            # 获取当前完成量
-            end_completion += st.completed
-        
-        # 计算时间跨度（自然日）
-        days_span = (now - start_date).days
-        if days_span <= 0:
-            return "N/A"
-        
-        # 计算平均日增量
-        total_increase = end_completion - start_completion
-        avg_daily = total_increase / days_span
-        
-        # 计算剩余量
-        remaining = max(0, self.total - end_completion)
-        
-        if avg_daily <= 0:
-            return "N/A"
-        
-        # 计算剩余天数
-        remaining_days = max(1, round(remaining / avg_daily))
-        
-        # 预计完成日期 = 当前日期 + 剩余天数
-        return (now + timedelta(days=remaining_days)).strftime("%Y-%m-%d")
+        return (now + timedelta(days=rd)).strftime("%Y-%m-%d")
     
     def to_dict(self):
         return {
@@ -543,35 +498,11 @@ class ProgressManager(QMainWindow):
         
         self.today_summary_btn = QPushButton("今日总结")
         self.today_summary_btn.setToolTip("显示今日有更新的任务总结")
-        self.today_summary_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 6px 10px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
         self.today_summary_btn.clicked.connect(self.show_today_summary)
         
         # 设置按钮：用于修改 recent_x（顶部设置面板按钮）
         self.settings_btn = QPushButton("设置")
         self.settings_btn.setToolTip("剩余天数计算的最近记录次数")
-        self.settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1976D2;
-                color: white;
-                border: none;
-                padding: 6px 10px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #1565C0;
-            }
-        """)
         self.settings_btn.clicked.connect(self.open_settings_dialog)
         
         mode_layout.addWidget(self.mode_label)
@@ -650,14 +581,21 @@ class ProgressManager(QMainWindow):
         # --- 右侧面板 ---
         self.mode_label.setStyleSheet(f"font-size: {scaled_font_size(14)}px;")
         self.mode_combo.setStyleSheet(f"font-size: {scaled_font_size(14)}px;")
-        self.today_summary_btn.setStyleSheet(f"""
+
+        # 统一设置今日总结按钮与设置按钮的大小和样式，使其视觉和谐
+        btn_common_style = f"""
             QPushButton {{
-                background-color: #1976D2; color: white; border: none;
-                padding: {scaled_size(6)}px {scaled_size(10)}px;
-                border-radius: 4px; font-size: {scaled_font_size(14)}px;
+                background-color: #1976D2;
+                color: white;
+                border: none;
+                padding: {scaled_size(6)}px {scaled_size(12)}px;
+                border-radius: 4px;
+                font-size: {scaled_font_size(14)}px;
             }}
             QPushButton:hover {{ background-color: #145a9e; }}
-        """)
+        """
+        self.today_summary_btn.setStyleSheet(btn_common_style)
+        self.settings_btn.setStyleSheet(btn_common_style)
         
         # --- 详细信息视图 ---
         self.detail_widget.layout().setSpacing(scaled_size(15))
@@ -850,7 +788,7 @@ class ProgressManager(QMainWindow):
         self.task_name_label.setText(self.current_task.name)
         self.task_progress_bar.setValue(round(self.current_task.progress))
         self.task_progress_bar.setFormat(f"{self.current_task.progress:.2f}%")
-        # 在显示预计完成时，使用 self.recent_x（用户设置）—— estimated_date 保持不变
+        # 在显示预计完成时，使用 self.recent_x（用户设置）—— estimated_date 已更改为 current + remaining_days
         est_date = self.current_task.estimated_date
         self.task_info_label.setText(
             f"状态: {self.current_task.status} | 剩余天数: {self.current_task.remaining_days} | "
@@ -1171,7 +1109,7 @@ class ProgressManager(QMainWindow):
             self.save_data()
             self.populate_task_list()
 
-    # ---------------- 今日总结（合并后的更完整实现） ----------------
+    # ---------------- 今日总结（合并后的更完整实现，输出使用英文标点并加 "页"） ----------------
     def show_today_summary(self):
         """弹出窗口显示今日有更新的任务总结，按指定格式显示"""
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1246,13 +1184,13 @@ class ProgressManager(QMainWindow):
             
             # 检查任务是否有更新（有子任务更新或总量变化）
             if subtask_info or total_change > 0 or abs(total_curr_percent - total_prev_percent) > 1e-6:
-                # 添加任务行
-                task_line = f"{task.name} : {total_change}, {total_prev_percent:.2f}% -> {total_curr_percent:.2f}%"
+                # 添加任务行，使用英文冒号和逗号，并在数字后加 "页"
+                task_line = f"{task.name}: {total_change}页, {total_prev_percent:.2f}% -> {total_curr_percent:.2f}%"
                 task_lines.append(task_line)
                 
                 # 添加子任务行（缩进显示）
                 for info in subtask_info:
-                    subtask_line = f"    {info['name']} : {info['change']}, {info['prev_percent']:.2f}% -> {info['curr_percent']:.2f}%"
+                    subtask_line = f"    {info['name']}: {info['change']}页, {info['prev_percent']:.2f}% -> {info['curr_percent']:.2f}%"
                     task_lines.append(subtask_line)
                 
                 summary_lines.extend(task_lines)
