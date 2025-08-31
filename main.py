@@ -104,10 +104,10 @@ class Task:
         """
         修改后的剩余天数计算逻辑（按用户要求）：
         - 取全任务的按日期快照（每个日期的总体完成量）
-        - 取最近 Task.RECENT_X 次快照：change = newest - oldest
-        - avg = change / len(samples)  （按用户要求“除以天数（也就是 x）”）
+        - 取倒数第1次（最新）与倒数第 x 次的前一次（即倒数第 x+1 次）两次快照之差：change = newest - prev
+        - avg_daily = change / x
         - remaining = total - newest
-        - remaining_days = round(remaining / avg) （若 avg <= 0 或数据不足，返回 0）
+        - remaining_days = round(remaining / avg_daily) （若 avg_daily <= 0 或数据不足，返回 0）
         """
         # 若没有子任务，无法估算
         if not self.sub_tasks:
@@ -145,23 +145,19 @@ class Task:
         if len(snapshots) < 2:
             return 0
         
-        # 取最近 RECENT_X 次快照（如果样本不足则取全部可用）
+        # 按用户要求的新逻辑：
         x = max(1, int(Task.RECENT_X))
-        samples = snapshots[-x:] if x <= len(snapshots) else snapshots[:]
-        
-        # 如果样本少于2条，无法计算
-        if len(samples) < 2:
+        # 需要最新一次（倒数第1次）和倒数第 x 次的前一次（即倒数第 x+1 次）
+        if len(snapshots) < x + 1:
+            # 数据不足以取到倒数第 x+1 次快照，无法估算
             return 0
         
-        oldest_val = samples[0][1]
-        newest_val = samples[-1][1]
-        change = newest_val - oldest_val
+        newest_val = snapshots[-1][1]
+        prev_val = snapshots[-(x + 1)][1]  # 倒数第 x+1 次
+        change = newest_val - prev_val
         
-        denom = len(samples)  # 按你的要求，除以样本数 x
-        if denom <= 0:
-            return 0
-        
-        avg_daily = change / denom
+        # 平均增量按用户要求除以 x（而不是 len(samples)）
+        avg_daily = change / x
         
         if avg_daily <= 0:
             # 无增长或负增长时不做估算，返回 0
