@@ -908,6 +908,17 @@ class ProgressManager(QMainWindow):
         
         menu = QMenu()
         
+        # 添加上下移动功能
+        move_up_action = menu.addAction("上移")
+        move_up_action.triggered.connect(lambda _, t=task, i=idx: self.move_task_up(t, i))
+        move_up_action.setEnabled(idx > 0)  # 第一个任务不能上移
+        
+        move_down_action = menu.addAction("下移")
+        move_down_action.triggered.connect(lambda _, t=task, i=idx: self.move_task_down(t, i))
+        move_down_action.setEnabled(idx < len(self.tasks) - 1)  # 最后一个任务不能下移
+        
+        menu.addSeparator()  # 分隔线
+        
         # 状态菜单
         status_menu = menu.addMenu("更改状态")
         for status in ["进行中", "暂停", "废止"]:
@@ -927,6 +938,36 @@ class ProgressManager(QMainWindow):
         delete_action.triggered.connect(lambda _, t=task: self.delete_task(t))
         
         menu.exec_(self.task_list.mapToGlobal(pos))
+    
+    def move_task_up(self, task, index):
+        """将任务上移一位"""
+        if index <= 0:  # 已经是第一个任务
+            return
+        
+        # 交换位置
+        self.tasks[index], self.tasks[index-1] = self.tasks[index-1], self.tasks[index]
+        self.save_data()
+        self.populate_task_list()
+        
+        # 重新选中移动后的任务
+        self.current_task = task
+        self.select_current_task_in_list()
+        self.update_detail_view()
+    
+    def move_task_down(self, task, index):
+        """将任务下移一位"""
+        if index >= len(self.tasks) - 1:  # 已经是最后一个任务
+            return
+        
+        # 交换位置
+        self.tasks[index], self.tasks[index+1] = self.tasks[index+1], self.tasks[index]
+        self.save_data()
+        self.populate_task_list()
+        
+        # 重新选中移动后的任务
+        self.current_task = task
+        self.select_current_task_in_list()
+        self.update_detail_view()
     
     def change_task_status(self, task, status):
         task.status = status
@@ -983,7 +1024,7 @@ class ProgressManager(QMainWindow):
             self.save_data()
             self.populate_task_list()
 
-    # ---------------- 新增：今日总结功能（保持原有实现） ----------------
+    # ---------------- 今日总结功能 ----------------
     def show_today_summary(self):
         """弹出窗口显示今日有更新的任务总结，按指定格式显示"""
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1077,7 +1118,6 @@ class ProgressManager(QMainWindow):
         
         if summary_lines:
             # 使用 QTextEdit 以便更好地显示格式化文本
-            from PyQt5.QtWidgets import QTextEdit
             text_edit = QTextEdit()
             text_edit.setReadOnly(True)
             
@@ -1103,9 +1143,9 @@ class ProgressManager(QMainWindow):
         dlg.exec_()
 
 
-    # ---------------- 新增：子任务右键菜单及处理函数（尽量少改动原代码） ----------------
+    # ---------------- 子任务右键菜单及处理函数 ----------------
     def show_subtask_context_menu(self, pos):
-        """在子任务列表右键时弹出菜单：重命名 / 修改总量 / 删除"""
+        """在子任务列表右键时弹出菜单：重命名 / 修改总量 / 删除 / 上下移动"""
         if not self.current_task:
             return
         item = self.subtask_list.itemAt(pos)
@@ -1117,6 +1157,18 @@ class ProgressManager(QMainWindow):
         st = self.current_task.sub_tasks[idx]
         
         menu = QMenu(self)
+        
+        # 添加上下移动功能
+        move_up_action = menu.addAction("上移")
+        move_up_action.triggered.connect(lambda _, t=self.current_task, i=idx: self.move_subtask_up(t, i))
+        move_up_action.setEnabled(idx > 0)  # 第一个子任务不能上移
+        
+        move_down_action = menu.addAction("下移")
+        move_down_action.triggered.connect(lambda _, t=self.current_task, i=idx: self.move_subtask_down(t, i))
+        move_down_action.setEnabled(idx < len(self.current_task.sub_tasks) - 1)  # 最后一个子任务不能下移
+        
+        menu.addSeparator()  # 分隔线
+        
         rename_act = menu.addAction("重命名子任务")
         change_total_act = menu.addAction("修改任务总量")
         delete_act = menu.addAction("删除子任务")
@@ -1126,6 +1178,36 @@ class ProgressManager(QMainWindow):
         delete_act.triggered.connect(lambda _, t=self.current_task, i=idx: self.delete_subtask(t, i))
         
         menu.exec_(self.subtask_list.mapToGlobal(pos))
+    
+    def move_subtask_up(self, task, index):
+        """将子任务上移一位"""
+        if index <= 0:  # 已经是第一个子任务
+            return
+        
+        # 交换位置
+        task.sub_tasks[index], task.sub_tasks[index-1] = task.sub_tasks[index-1], task.sub_tasks[index]
+        self.save_data()
+        
+        # 更新当前任务的子任务列表
+        if task == self.current_task:
+            self.update_detail_view()
+            # 重新选中移动后的子任务
+            self.subtask_list.setCurrentRow(index-1)
+    
+    def move_subtask_down(self, task, index):
+        """将子任务下移一位"""
+        if index >= len(task.sub_tasks) - 1:  # 已经是最后一个子任务
+            return
+        
+        # 交换位置
+        task.sub_tasks[index], task.sub_tasks[index+1] = task.sub_tasks[index+1], task.sub_tasks[index]
+        self.save_data()
+        
+        # 更新当前任务的子任务列表
+        if task == self.current_task:
+            self.update_detail_view()
+            # 重新选中移动后的子任务
+            self.subtask_list.setCurrentRow(index+1)
     
     def rename_subtask(self, task, idx):
         """重命名子任务"""
@@ -1172,9 +1254,8 @@ class ProgressManager(QMainWindow):
             if task == self.current_task:
                 self.update_detail_view()
             self.refresh_task_cards()
-    # ---------------- 新增结束 ----------------
 
-    # ---------- 设置对话框（改为可放多个设置项的面板，当前仅一个 x 输入框） ----------
+    # ---------- 设置对话框 ----------
     def open_settings_dialog(self):
         """
         弹出一个完整的设置面板（QDialog），面板使用 QFormLayout 放置多个设置项。
