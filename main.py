@@ -1,3 +1,5 @@
+# (以下为你原有代码的完整内容，仅包含我做的最小改动 —— 请直接替换整个文件)
+
 import sys
 import json
 import random
@@ -347,6 +349,27 @@ class SubTaskCard(QWidget):
         # 宽度可交给视图自行计算
         return QSize(scaled_size(300), h)
 
+# --- 新增类：可拖拽的 QListWidget（最小改动实现拖拽并回调父窗口处理顺序变更） ---
+class DraggableListWidget(QListWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # 启用内部拖放
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+
+    def dropEvent(self, event):
+        # 先执行默认行为（移动 item）
+        super().dropEvent(event)
+        # 再通知父窗口（如果父窗口实现了 on_task_reordered）
+        parent = self.parent()
+        if parent and hasattr(parent, "on_task_reordered"):
+            try:
+                parent.on_task_reordered()
+            except Exception:
+                pass
+
 class ProgressManager(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -490,7 +513,8 @@ class ProgressManager(QMainWindow):
         left_panel = QWidget()
         left_layout = QVBoxLayout()
         
-        self.task_list = QListWidget()
+        # 使用可拖拽的 QListWidget（父对象设为 self，便于回调）
+        self.task_list = DraggableListWidget(self)
         self.task_list.itemSelectionChanged.connect(self.on_task_selected)
         
         # 添加任务按钮
@@ -671,6 +695,8 @@ class ProgressManager(QMainWindow):
             item = QListWidgetItem()
             widget = TaskCard(task, parent=self)
             item.setSizeHint(widget.sizeHint())
+            # 关键：把 task 的唯一标识绑定到 item（用于在拖放后重建 self.tasks）
+            item.setData(Qt.UserRole, id(task))
             self.task_list.addItem(item)
             self.task_list.setItemWidget(item, widget)
     
@@ -1126,6 +1152,39 @@ class ProgressManager(QMainWindow):
             self.tasks.append(Task(name))
             self.save_data()
             self.populate_task_list()
+
+    # 新增：在项被拖拽并放下后，根据 QListWidget 中 item 的 UserRole (id(task)) 重建 self.tasks 顺序并保存
+    def on_task_reordered(self):
+        try:
+            # 构建 id -> task 映射
+            id_to_task = {id(t): t for t in self.tasks}
+            new_order = []
+            for i in range(self.task_list.count()):
+                item = self.task_list.item(i)
+                tid = item.data(Qt.UserRole)
+                if tid in id_to_task:
+                    new_order.append(id_to_task[tid])
+            if new_order:
+                # 记录当前选中任务对象以便恢复选中
+                prev_selected = self.current_task
+                self.tasks = new_order
+                # 保存到磁盘
+                self.save_data()
+                # 尝试恢复选中（同一对象引用）
+                if prev_selected is not None:
+                    try:
+                        idx = self.tasks.index(prev_selected)
+                        if 0 <= idx < self.task_list.count():
+                            self.task_list.setCurrentRow(idx)
+                            self.current_task = prev_selected
+                            self.update_detail_view()
+                    except ValueError:
+                        # 之前的选中任务已不在列表（极端情况），忽略
+                        self.current_task = None
+                        self.update_detail_view()
+        except Exception:
+            # 忽略一切 reorder 错误，避免影响用户体验
+            pass
 
     # ---------------- 今日总结（合并后的更完整实现，输出使用英文标点并加 "页"） ----------------
     def show_today_summary(self):
