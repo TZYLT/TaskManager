@@ -98,6 +98,7 @@ class ProgressManager(QMainWindow):
         self.current_task: Task = None    # 当前选中的任务
         self.current_subtask: SubTask = None  # 当前选中的子任务
         self.recent_x = self.task_manager.recent_x  # 同步配置
+        self.chart_date_range = {}  # 存储每个任务的图表日期范围
         self.init_window()
         self.init_ui()
 
@@ -274,22 +275,94 @@ class ProgressManager(QMainWindow):
         self.chart_widget = QWidget()
         layout = QVBoxLayout(self.chart_widget)
 
-        # 图表类型选择
+        # 图表类型和日期范围选择
+        chart_control_layout = QHBoxLayout()
+        
+        # 图表模式选择
         chart_type_layout = QHBoxLayout()
         self.chart_type_combo = QComboBox()
         self.chart_type_combo.addItems(["总量模式", "增量模式"])
         self.chart_type_combo.currentIndexChanged.connect(self.update_chart)
         chart_type_layout.addWidget(QLabel("图表模式:"))
         chart_type_layout.addWidget(self.chart_type_combo)
-        chart_type_layout.addStretch()
+        
+        # 日期范围选择
+        date_range_layout = QHBoxLayout()
+        self.start_date_edit = QDateEdit()
+        self.start_date_edit.setCalendarPopup(True)
+        self.start_date_edit.dateChanged.connect(self.on_date_range_changed)
+        
+        self.end_date_edit = QDateEdit()
+        self.end_date_edit.setCalendarPopup(True)
+        self.end_date_edit.dateChanged.connect(self.on_date_range_changed)
+        
+        self.reset_date_range_btn = QPushButton("重置范围")
+        self.reset_date_range_btn.setToolTip("重置为任务的全部日期范围")
+        self.reset_date_range_btn.clicked.connect(self.reset_date_range)
+        self.reset_date_range_btn.setStyleSheet("""
+            QPushButton {background-color: #6c757d; color: white; border: none; padding: 4px 8px; border-radius: 4px;}
+            QPushButton:hover {background-color: #5a6268;}
+        """)
+        
+        date_range_layout.addWidget(QLabel("日期范围:"))
+        date_range_layout.addWidget(self.start_date_edit)
+        date_range_layout.addWidget(QLabel("到"))
+        date_range_layout.addWidget(self.end_date_edit)
+        date_range_layout.addWidget(self.reset_date_range_btn)
+        
+        # 组装控制行
+        chart_control_layout.addLayout(chart_type_layout)
+        chart_control_layout.addSpacing(20)
+        chart_control_layout.addLayout(date_range_layout)
+        chart_control_layout.addStretch()
 
         # 图表视图
         self.chart_view = QChartView()
         self.chart_view.setRenderHint(QPainter.Antialiasing)
 
         # 组装图表面板
-        layout.addLayout(chart_type_layout)
+        layout.addLayout(chart_control_layout)
         layout.addWidget(self.chart_view)
+
+    def on_date_range_changed(self):
+        """日期范围改变时更新图表"""
+        if self.current_task and self.stacked_widget.currentIndex() == 1:
+            # 保存当前任务的日期范围设置
+            task_id = id(self.current_task)
+            self.chart_date_range[task_id] = {
+                'start': self.start_date_edit.date().toString("yyyy-MM-dd"),
+                'end': self.end_date_edit.date().toString("yyyy-MM-dd")
+            }
+            self.update_chart()
+
+    def reset_date_range(self):
+        """重置日期范围为任务的全部记录范围"""
+        if not self.current_task:
+            return
+            
+        # 收集所有记录日期
+        all_dates = set()
+        for st in self.current_task.sub_tasks:
+            all_dates.update(st.records.keys())
+        
+        if not all_dates:
+            return
+            
+        # 计算日期范围
+        sorted_date_strs = sorted(all_dates, key=lambda d: datetime.strptime(d, "%Y-%m-%d"))
+        min_date = datetime.strptime(sorted_date_strs[0], "%Y-%m-%d")
+        max_date = datetime.strptime(sorted_date_strs[-1], "%Y-%m-%d")
+        
+        # 设置日期控件
+        self.start_date_edit.setDate(QDate(min_date.year, min_date.month, min_date.day))
+        self.end_date_edit.setDate(QDate(max_date.year, max_date.month, max_date.day))
+
+    def get_task_date_range(self, task):
+        """获取任务的日期范围"""
+        task_id = id(task)
+        if task_id in self.chart_date_range:
+            return self.chart_date_range[task_id]
+        return None
 
     # ---------------- 事件处理 ----------------
     def on_task_selected(self):
@@ -381,8 +454,50 @@ class ProgressManager(QMainWindow):
             self.subtask_list.addItem(item)
             self.subtask_list.setItemWidget(item, card)
 
+        # 初始化日期范围控件
+        self.init_date_range_controls()
+        
         # 更新图表（确保图表与当前任务同步）
         self.update_chart()
+
+    def init_date_range_controls(self):
+        """初始化日期范围控件"""
+        if not self.current_task:
+            return
+            
+        # 收集所有记录日期
+        all_dates = set()
+        for st in self.current_task.sub_tasks:
+            all_dates.update(st.records.keys())
+        
+        if not all_dates:
+            # 如果没有记录，设置默认范围（当前日期前后各30天）
+            today = QDate.currentDate()
+            self.start_date_edit.setDate(today.addDays(-30))
+            self.end_date_edit.setDate(today.addDays(30))
+            return
+            
+        # 计算日期范围
+        sorted_date_strs = sorted(all_dates, key=lambda d: datetime.strptime(d, "%Y-%m-%d"))
+        min_date = datetime.strptime(sorted_date_strs[0], "%Y-%m-%d")
+        max_date = datetime.strptime(sorted_date_strs[-1], "%Y-%m-%d")
+        
+        # 检查是否有保存的日期范围设置
+        saved_range = self.get_task_date_range(self.current_task)
+        if saved_range:
+            try:
+                start_date = datetime.strptime(saved_range['start'], "%Y-%m-%d")
+                end_date = datetime.strptime(saved_range['end'], "%Y-%m-%d")
+                self.start_date_edit.setDate(QDate(start_date.year, start_date.month, start_date.day))
+                self.end_date_edit.setDate(QDate(end_date.year, end_date.month, end_date.day))
+            except ValueError:
+                # 如果保存的格式有问题，使用默认范围
+                self.start_date_edit.setDate(QDate(min_date.year, min_date.month, min_date.day))
+                self.end_date_edit.setDate(QDate(max_date.year, max_date.month, max_date.day))
+        else:
+            # 使用任务的完整日期范围
+            self.start_date_edit.setDate(QDate(min_date.year, min_date.month, min_date.day))
+            self.end_date_edit.setDate(QDate(max_date.year, max_date.month, max_date.day))
 
     def update_chart(self):
         """更新图表数据"""
@@ -402,16 +517,28 @@ class ProgressManager(QMainWindow):
         axis_y = QValueAxis()
         axis_y.setTitleText("进度 (%)")
 
-        # 收集所有记录日期
-        all_dates = set()
+        # 获取日期范围
+        start_date = self.start_date_edit.date().toPyDate()
+        end_date = self.end_date_edit.date().toPyDate()
+        
+        # 收集指定日期范围内的记录
+        filtered_dates = set()
         for st in self.current_task.sub_tasks:
-            all_dates.update(st.records.keys())
-        if not all_dates:
+            for date_str in st.records.keys():
+                try:
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                    if start_date <= date_obj <= end_date:
+                        filtered_dates.add(date_str)
+                except ValueError:
+                    continue
+        
+        if not filtered_dates:
+            # 如果没有数据，显示空图表
             self.chart_view.setChart(chart)
             return
 
         # 日期排序
-        sorted_date_strs = sorted(all_dates, key=lambda d: datetime.strptime(d, "%Y-%m-%d"))
+        sorted_date_strs = sorted(filtered_dates, key=lambda d: datetime.strptime(d, "%Y-%m-%d"))
         sorted_date_objs = [datetime.strptime(d, "%Y-%m-%d") for d in sorted_date_strs]
         axis_x.setRange(min(sorted_date_objs), max(sorted_date_objs) + timedelta(days=1))
 
