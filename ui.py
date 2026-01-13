@@ -5,11 +5,12 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QLabel, QProgressBar, QPushButton, QStackedWidget, QLineEdit, QFormLayout, QMenu,
     QAction, QMessageBox, QGroupBox, QComboBox, QDateEdit, QSpinBox, QInputDialog,
-    QGraphicsSimpleTextItem, QDialog, QDialogButtonBox, QTextEdit, QScrollArea
+    QGraphicsSimpleTextItem, QDialog, QDialogButtonBox, QTextEdit, QScrollArea,
+    QTreeWidget, QTreeWidgetItem, QHeaderView
 )
-from PyQt5.QtCore import Qt, QDate, QTimer
+from PyQt5.QtCore import Qt, QDate, QTimer, pyqtSignal
 from PyQt5.QtChart import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
-from PyQt5.QtGui import QColor, QPainter
+from PyQt5.QtGui import QColor, QPainter, QFont
 from tasks import SubTask, Task, TaskManager
 
 
@@ -32,9 +33,17 @@ class TaskCard(QWidget):
         self.name_label.setStyleSheet("font-family: \"黑体\", sans-serif; font-weight: bold; font-size: 20px;")
         self.name_label.setWordWrap(True)
 
-        self.status_label = QLabel(self.task.status)
+        # 检查进度是否为100%，如果是则显示"已完成"
+        if self.task.progress >= 100:
+            display_status = "已完成"
+            display_color = QColor(0, 128, 0)  # 绿色表示已完成
+        else:
+            display_status = self.task.status
+            display_color = Task.STATUS_COLORS.get(self.task.status, QColor(0, 0, 0))
+        
+        self.status_label = QLabel(display_status)
         self.status_label.setStyleSheet(
-            f"font-family: \"黑体\", sans-serif; color: {Task.STATUS_COLORS.get(self.task.status, QColor(0,0,0)).name()}; font-size: 19px;"
+            f"font-family: \"黑体\", sans-serif; color: {display_color.name()}; font-size: 19px;"
         )
 
         header_layout.addWidget(self.name_label)
@@ -44,17 +53,34 @@ class TaskCard(QWidget):
         # 进度条
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(round(self.task.progress))
-        self.progress_bar.setFormat(f" {self.task.progress:.2f}%")
-        self.progress_bar.setStyleSheet(
-            f"""QProgressBar {{font-size:16px;}}
-               QProgressBar::chunk {{background-color: {Task.STATUS_COLORS.get(self.task.status, QColor(0,0,0)).name()};}}"""
-        )
+        
+        # 根据是否完成设置不同的格式和颜色
+        if self.task.progress >= 100:
+            self.progress_bar.setFormat(" 100.00%")
+            self.progress_bar.setStyleSheet(
+                f"""QProgressBar {{font-size:16px;}}
+                   QProgressBar::chunk {{background-color: #32CD32;}}"""
+            )
+        else:
+            self.progress_bar.setFormat(f" {self.task.progress:.2f}%")
+            self.progress_bar.setStyleSheet(
+                f"""QProgressBar {{font-size:16px;}}
+                   QProgressBar::chunk {{background-color: {Task.STATUS_COLORS.get(self.task.status, QColor(0,0,0)).name()};}}"""
+            )
 
         # 任务信息（剩余天数+预计完成日期）
         info_layout = QHBoxLayout()
-        days_text = f"剩余天数: {self.task.remaining_days}天 | 预计完成: {self.task.estimated_date}"
+        if self.task.progress >= 100:
+            # 任务完成时显示完成信息
+            days_text = "已完成"
+        else:
+            days_text = f"剩余天数: {self.task.remaining_days}天 | 预计完成: {self.task.estimated_date}"
+        
         self.days_info = QLabel(days_text)
-        self.days_info.setStyleSheet("font-size: 14px; color: #000;")
+        if self.task.progress >= 100:
+            self.days_info.setStyleSheet("font-size: 14px; color: #008000; font-weight: bold;")
+        else:
+            self.days_info.setStyleSheet("font-size: 14px; color: #000;")
         info_layout.addWidget(self.days_info)
         info_layout.addStretch()
 
@@ -66,28 +92,187 @@ class TaskCard(QWidget):
 
         # 卡片样式
         self.setFixedHeight(100)
-        self.setStyleSheet("""
-            TaskCard {background-color: white; border-radius: 8px; border: 1px solid #ddd;}
-            TaskCard:hover {border: 1px solid #aaa;}
-        """)
+        if self.task.progress >= 100:
+            self.setStyleSheet("""
+                TaskCard {background-color: #f0fff0; border-radius: 8px; border: 2px solid #008000;}
+                TaskCard:hover {border: 2px solid #006400;}
+            """)
+        elif self.task.status == "废止":
+            self.setStyleSheet("""
+                TaskCard {background-color: #f8f8f8; border-radius: 8px; border: 1px solid #ddd;}
+                TaskCard:hover {border: 1px solid #aaa;}
+            """)
+        else:
+            self.setStyleSheet("""
+                TaskCard {background-color: white; border-radius: 8px; border: 1px solid #ddd;}
+                TaskCard:hover {border: 1px solid #aaa;}
+            """)
 
     def update_task(self, task: Task):
         """更新卡片显示的任务数据"""
         self.task = task
+        
+        # 检查进度是否为100%，如果是则显示"已完成"
+        if task.progress >= 100:
+            display_status = "已完成"
+            display_color = QColor(0, 128, 0)  # 绿色表示已完成
+        else:
+            display_status = task.status
+            display_color = Task.STATUS_COLORS.get(task.status, QColor(0, 0, 0))
+        
         self.name_label.setText(task.name)
-        self.status_label.setText(task.status)
+        self.status_label.setText(display_status)
         self.status_label.setStyleSheet(
-            f"font-family: \"黑体\", sans-serif; color: {Task.STATUS_COLORS.get(task.status, QColor(0,0,0)).name()}; font-size: 19px;"
+            f"font-family: \"黑体\", sans-serif; color: {display_color.name()}; font-size: 19px;"
         )
         self.progress_bar.setValue(round(task.progress))
-        self.progress_bar.setFormat(f" {task.progress:.2f}%")
-        self.progress_bar.setStyleSheet(
-            f"""QProgressBar {{font-size:16px;}}
-               QProgressBar::chunk {{background-color: {Task.STATUS_COLORS.get(task.status, QColor(0,0,0)).name()};}}"""
-        )
+        
+        # 根据是否完成设置不同的格式和颜色
+        if task.progress >= 100:
+            self.progress_bar.setFormat(" 100.00%")
+            self.progress_bar.setStyleSheet(
+                f"""QProgressBar {{font-size:16px;}}
+                   QProgressBar::chunk {{background-color: #008000;}}"""
+            )
+        else:
+            self.progress_bar.setFormat(f" {task.progress:.2f}%")
+            self.progress_bar.setStyleSheet(
+                f"""QProgressBar {{font-size:16px;}}
+                   QProgressBar::chunk {{background-color: {Task.STATUS_COLORS.get(task.status, QColor(0,0,0)).name()};}}"""
+            )
+        
         # 更新剩余天数和预计日期
-        days_text = f"剩余天数: {task.remaining_days}天 | 预计完成: {task.estimated_date}"
+        if task.progress >= 100:
+            days_text = "已完成"
+            self.days_info.setStyleSheet("font-size: 14px; color: #008000; font-weight: bold;")
+        else:
+            days_text = f"剩余天数: {task.remaining_days}天 | 预计完成: {task.estimated_date}"
+            self.days_info.setStyleSheet("font-size: 14px; color: #000;")
+        
         self.days_info.setText(days_text)
+        
+        # 更新卡片样式
+        if task.progress >= 100:
+            self.setStyleSheet("""
+                TaskCard {background-color: #f0fff0; border-radius: 8px; border: 2px solid #008000;}
+                TaskCard:hover {border: 2px solid #006400;}
+            """)
+        elif task.status == "废止":
+            self.setStyleSheet("""
+                TaskCard {background-color: #f8f8f8; border-radius: 8px; border: 1px solid #ddd;}
+                TaskCard:hover {border: 1px solid #aaa;}
+            """)
+        else:
+            self.setStyleSheet("""
+                TaskCard {background-color: white; border-radius: 8px; border: 1px solid #ddd;}
+                TaskCard:hover {border: 1px solid #aaa;}
+            """)
+
+
+class TaskTreeWidget(QTreeWidget):
+    """自定义树形控件，用于显示分类的任务"""
+    taskSelected = pyqtSignal(int)  # 信号，传递任务索引
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setHeaderHidden(True)
+        self.setColumnCount(1)
+        self.setIndentation(10)
+        self.setAnimated(True)
+        
+        # 设置样式
+        self.setStyleSheet("""
+            QTreeWidget {
+                background-color: #f0f2f5;
+                border: none;
+                border-radius: 8px;
+            }
+            QTreeWidget::item {
+                border-bottom: 1px solid #dee2e6;
+            }
+            QTreeWidget::item:selected {
+                background-color: #e2e6ea;
+            }
+        """)
+        
+        # 创建分类项目
+        self.active_category = QTreeWidgetItem(self)
+        self.active_category.setText(0, "进行中")
+        self.active_category.setExpanded(True)
+        
+        self.completed_category = QTreeWidgetItem(self)
+        self.completed_category.setText(0, "已完成")
+        self.completed_category.setExpanded(False)  # 默认折叠
+        
+        self.aborted_category = QTreeWidgetItem(self)
+        self.aborted_category.setText(0, "已废止")
+        self.aborted_category.setExpanded(False)  # 默认折叠
+        
+        # 为分类项目添加小三角形图标
+        self.active_category.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+        self.completed_category.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+        self.aborted_category.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+        
+        # 连接选择信号
+        self.itemSelectionChanged.connect(self.on_item_selected)
+        
+    def on_item_selected(self):
+        """当项目被选中时触发"""
+        selected_items = self.selectedItems()
+        if not selected_items:
+            return
+        
+        item = selected_items[0]
+        # 只有任务项（有数据的项）才发送信号
+        if item.parent() is not None and hasattr(item, 'task_index'):
+            self.taskSelected.emit(item.task_index)
+    
+    def clear_all_tasks(self):
+        """清除所有任务项"""
+        for i in range(self.active_category.childCount()):
+            self.active_category.removeChild(self.active_category.child(0))
+        for i in range(self.completed_category.childCount()):
+            self.completed_category.removeChild(self.completed_category.child(0))
+        for i in range(self.aborted_category.childCount()):
+            self.aborted_category.removeChild(self.aborted_category.child(0))
+    
+    def add_task_item(self, task: Task, task_index: int, category: str):
+        """添加任务项到指定分类"""
+        if category == "active":
+            parent = self.active_category
+        elif category == "completed":
+            parent = self.completed_category
+        else:  # "aborted"
+            parent = self.aborted_category
+        
+        item = QTreeWidgetItem(parent)
+        item.task_index = task_index  # 存储任务索引
+        
+        # 创建卡片并设置到项目中
+        card = TaskCard(task, self)
+        self.setItemWidget(item, 0, card)
+        
+        # 设置项目大小以适应卡片
+        item.setSizeHint(0, card.sizeHint())
+        
+        return item
+    
+    def find_task_item(self, task_index: int):
+        """根据任务索引查找对应的项目"""
+        # 在所有分类中查找
+        for category_item in [self.active_category, self.completed_category, self.aborted_category]:
+            for i in range(category_item.childCount()):
+                child = category_item.child(i)
+                if hasattr(child, 'task_index') and child.task_index == task_index:
+                    return child
+        return None
+    
+    def select_task(self, task_index: int):
+        """选择指定索引的任务"""
+        item = self.find_task_item(task_index)
+        if item:
+            self.setCurrentItem(item)
+            self.scrollToItem(item)
 
 
 class ProgressManager(QMainWindow):
@@ -112,21 +297,16 @@ class ProgressManager(QMainWindow):
         """构建完整UI布局"""
         main_layout = QHBoxLayout(self.centralWidget())
 
-        # ---------------- 左侧任务列表面板 ----------------
+        # ---------------- 左侧任务树形面板 ----------------
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
 
-        # 任务列表
-        self.task_list = QListWidget()
-        self.task_list.setStyleSheet("""
-            QListWidget {background-color: #f0f2f5; border: none; border-radius: 8px; padding: 5px;}
-            QListWidget::item {border-bottom: 1px solid #dee2e6;}
-            QListWidget::item:selected {background-color: #e2e6ea;}
-        """)
-        self.task_list.itemSelectionChanged.connect(self.on_task_selected)
-        self.task_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.task_list.customContextMenuRequested.connect(self.show_task_context_menu)
-        self.populate_task_list()
+        # 使用树形控件替代列表
+        self.task_tree = TaskTreeWidget()
+        self.task_tree.taskSelected.connect(self.on_task_selected)
+        self.task_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.task_tree.customContextMenuRequested.connect(self.show_task_context_menu)
+        self.populate_task_tree()
 
         # 添加任务按钮
         add_task_btn = QPushButton("添加新任务")
@@ -138,7 +318,7 @@ class ProgressManager(QMainWindow):
 
         # 组装左侧布局
         left_layout.addWidget(QLabel("任务列表"))
-        left_layout.addWidget(self.task_list)
+        left_layout.addWidget(self.task_tree)
         left_layout.addWidget(add_task_btn)
 
         # ---------------- 右侧功能面板 ----------------
@@ -191,15 +371,36 @@ class ProgressManager(QMainWindow):
         main_layout.addWidget(left_panel, 30)  # 左侧占30%宽度
         main_layout.addWidget(right_panel, 70) # 右侧占70%宽度
 
-    def populate_task_list(self):
-        """填充任务列表（生成任务卡片）"""
-        self.task_list.clear()
-        for task in self.task_manager.tasks:
-            item = QListWidgetItem()
-            card = TaskCard(task, parent=self)
-            item.setSizeHint(card.sizeHint())
-            self.task_list.addItem(item)
-            self.task_list.setItemWidget(item, card)
+    def populate_task_tree(self):
+        """填充任务树形控件，按状态分类"""
+        self.task_tree.clear_all_tasks()
+        
+        # 临时存储任务索引，用于排序
+        active_tasks = []
+        completed_tasks = []
+        aborted_tasks = []
+        
+        # 分类任务
+        for idx, task in enumerate(self.task_manager.tasks):
+            # 检查进度是否为100%，如果是则视为已完成
+            if task.progress >= 100:
+                completed_tasks.append((idx, task))
+            elif task.status == "废止":
+                aborted_tasks.append((idx, task))
+            else:
+                active_tasks.append((idx, task))
+        
+        # 添加活动任务
+        for idx, task in active_tasks:
+            self.task_tree.add_task_item(task, idx, "active")
+        
+        # 添加已完成任务
+        for idx, task in completed_tasks:
+            self.task_tree.add_task_item(task, idx, "completed")
+        
+        # 添加已废止任务
+        for idx, task in aborted_tasks:
+            self.task_tree.add_task_item(task, idx, "aborted")
 
     # ---------------- 详细信息面板 ----------------
     def init_detail_view(self):
@@ -365,17 +566,10 @@ class ProgressManager(QMainWindow):
         return None
 
     # ---------------- 事件处理 ----------------
-    def on_task_selected(self):
-        """任务列表选中事件：更新详细信息和图表"""
-        selected_items = self.task_list.selectedItems()
-        if not selected_items:
-            self.current_task = None
-            self.update_detail_view()
-            return
-
-        idx = self.task_list.row(selected_items[0])
-        if 0 <= idx < len(self.task_manager.tasks):
-            self.current_task = self.task_manager.tasks[idx]
+    def on_task_selected(self, task_index):
+        """任务树形控件选中事件：更新详细信息和图表"""
+        if 0 <= task_index < len(self.task_manager.tasks):
+            self.current_task = self.task_manager.tasks[task_index]
         else:
             self.current_task = None
         self.update_detail_view()
@@ -418,7 +612,7 @@ class ProgressManager(QMainWindow):
         self.task_manager.save_tasks()
         self.update_detail_view()
         self.refresh_task_cards()
-        self.select_current_task_in_list()
+        self.select_current_task_in_tree()
 
     def switch_mode(self, index):
         """切换显示模式（详细信息/图表）"""
@@ -440,9 +634,17 @@ class ProgressManager(QMainWindow):
         # 更新任务概览
         self.task_name_label.setText(self.current_task.name)
         self.task_progress_bar.setValue(round(self.current_task.progress))
-        self.task_progress_bar.setFormat(f"{self.current_task.progress:.2f}%")
+        
+        # 根据是否完成设置不同的格式
+        if self.current_task.progress >= 100:
+            self.task_progress_bar.setFormat("100.00%")
+            status_display = "已完成"
+        else:
+            self.task_progress_bar.setFormat(f"{self.current_task.progress:.2f}%")
+            status_display = self.current_task.status
+            
         self.task_info_label.setText(
-            f"状态: {self.current_task.status} | 剩余天数: {self.current_task.remaining_days} | 预计完成: {self.current_task.estimated_date}"
+            f"状态: {status_display} | 剩余天数: {self.current_task.remaining_days} | 预计完成: {self.current_task.estimated_date}"
         )
 
         # 更新子任务列表
@@ -670,14 +872,43 @@ class ProgressManager(QMainWindow):
     # ---------------- 右键菜单 ----------------
     def show_task_context_menu(self, pos):
         """任务列表右键菜单：状态修改、重命名、删除等"""
-        item = self.task_list.itemAt(pos)
+        item = self.task_tree.itemAt(pos)
         if not item:
             return
-
-        idx = self.task_list.row(item)
+        
+        # 确保选中的是任务项，而不是分类项
+        if item.parent() is None:
+            return
+            
+        idx = item.task_index
         if idx < 0 or idx >= len(self.task_manager.tasks):
             return
         task = self.task_manager.tasks[idx]
+
+        # 如果任务已完成，不提供状态修改选项
+        if task.progress >= 100:
+            # 构建菜单（只提供重命名和删除）
+            menu = QMenu(self)
+            
+            # 上下移动
+            move_up_act = menu.addAction("上移")
+            move_up_act.triggered.connect(lambda: self.move_task(idx, -1))
+            move_up_act.setEnabled(idx > 0)
+
+            move_down_act = menu.addAction("下移")
+            move_down_act.triggered.connect(lambda: self.move_task(idx, 1))
+            move_down_act.setEnabled(idx < len(self.task_manager.tasks) - 1)
+
+            menu.addSeparator()
+            
+            # 不提供状态修改，已完成任务状态固定
+            menu.addAction("重命名", lambda: self.rename_task(task))
+            menu.addAction("添加子任务", lambda: self.add_subtask(task))
+            menu.addAction("删除任务", lambda: self.delete_task(task))
+            
+            # 显示菜单
+            menu.exec_(self.task_tree.mapToGlobal(pos))
+            return
 
         # 构建菜单
         menu = QMenu(self)
@@ -693,7 +924,7 @@ class ProgressManager(QMainWindow):
 
         menu.addSeparator()
 
-        # 状态修改
+        # 状态修改（不包含已完成，因为已完成是自动设置的）
         status_menu = menu.addMenu("更改状态")
         for status in ["进行中", "暂停", "废止"]:
             act = status_menu.addAction(status)
@@ -705,7 +936,7 @@ class ProgressManager(QMainWindow):
         menu.addAction("删除任务", lambda: self.delete_task(task))
 
         # 显示菜单
-        menu.exec_(self.task_list.mapToGlobal(pos))
+        menu.exec_(self.task_tree.mapToGlobal(pos))
 
     def show_subtask_context_menu(self, pos):
         """子任务列表右键菜单：重命名、修改总量、删除等"""
@@ -751,16 +982,21 @@ class ProgressManager(QMainWindow):
         # 交换位置
         self.task_manager.tasks[idx], self.task_manager.tasks[new_idx] = self.task_manager.tasks[new_idx], self.task_manager.tasks[idx]
         self.task_manager.save_tasks()
-        self.populate_task_list()
+        self.populate_task_tree()
         # 重新选中任务
         self.current_task = self.task_manager.tasks[new_idx]
-        self.select_current_task_in_list()
+        self.select_current_task_in_tree()
 
     def change_task_status(self, task: Task, status: str):
         """修改任务状态"""
+        # 如果任务进度已达到100%，不允许修改状态
+        if task.progress >= 100:
+            QMessageBox.information(self, "提示", "任务已完成，无法修改状态")
+            return
+            
         task.status = status
         self.task_manager.save_tasks()
-        self.populate_task_list()
+        self.populate_task_tree()
         if task == self.current_task:
             self.update_detail_view()
 
@@ -770,12 +1006,17 @@ class ProgressManager(QMainWindow):
         if ok and new_name.strip():
             task.name = new_name.strip()
             self.task_manager.save_tasks()
-            self.populate_task_list()
+            self.populate_task_tree()
             if task == self.current_task:
                 self.update_detail_view()
 
     def add_subtask(self, task: Task):
         """为任务添加子任务"""
+        # 如果任务已完成，不允许添加子任务
+        if task.progress >= 100:
+            QMessageBox.information(self, "提示", "任务已完成，无法添加子任务")
+            return
+            
         # 输入子任务名称
         name, ok = QInputDialog.getText(self, "添加子任务", "输入子任务名称:")
         if not (ok and name.strip()):
@@ -799,7 +1040,7 @@ class ProgressManager(QMainWindow):
         if reply == QMessageBox.Yes:
             self.task_manager.tasks.remove(task)
             self.task_manager.save_tasks()
-            self.populate_task_list()
+            self.populate_task_tree()
             if task == self.current_task:
                 self.current_task = None
                 self.update_detail_view()
@@ -868,7 +1109,7 @@ class ProgressManager(QMainWindow):
         if ok and name.strip():
             self.task_manager.tasks.append(Task(name.strip()))
             self.task_manager.save_tasks()
-            self.populate_task_list()
+            self.populate_task_tree()
 
     def show_today_summary(self):
         """显示今日任务更新总结"""
@@ -974,10 +1215,10 @@ class ProgressManager(QMainWindow):
             self.recent_x = new_x
 
             # 刷新UI
-            self.populate_task_list()
+            self.populate_task_tree()
             if self.current_task:
                 self.update_detail_view()
-                self.select_current_task_in_list()
+                self.select_current_task_in_tree()
 
             dlg.accept()
 
@@ -989,22 +1230,19 @@ class ProgressManager(QMainWindow):
 
     def refresh_task_cards(self):
         """刷新所有任务卡片数据"""
-        for i in range(self.task_list.count()):
-            item = self.task_list.item(i)
-            card = self.task_list.itemWidget(item)
-            if card and 0 <= i < len(self.task_manager.tasks):
-                card.update_task(self.task_manager.tasks[i])
+        self.populate_task_tree()
 
-    def select_current_task_in_list(self):
-        """在任务列表中选中当前任务"""
+    def select_current_task_in_tree(self):
+        """在任务树中选中当前任务"""
         if not self.current_task:
             return
-        for i in range(self.task_list.count()):
-            item = self.task_list.item(i)
-            card = self.task_list.itemWidget(item)
-            if card and card.task == self.current_task:
-                self.task_list.setCurrentItem(item)
-                break
+        
+        # 查找当前任务在列表中的索引
+        try:
+            task_index = self.task_manager.tasks.index(self.current_task)
+            self.task_tree.select_task(task_index)
+        except ValueError:
+            pass
 
     def create_subtask_card(self, subtask: SubTask):
         """创建子任务卡片（用于子任务列表）"""
