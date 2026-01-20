@@ -281,6 +281,7 @@ class ProgressManager(QMainWindow):
         super().__init__()
         self.task_manager = task_manager  # 依赖注入任务管理器
         self.current_task: Task = None    # 当前选中的任务
+        self.current_task_id = None        # 记住当前任务的ID（用于恢复选择）
         self.current_subtask: SubTask = None  # 当前选中的子任务
         self.recent_x = self.task_manager.recent_x  # 同步配置
         self.chart_date_range = {}  # 存储每个任务的图表日期范围
@@ -371,36 +372,36 @@ class ProgressManager(QMainWindow):
         main_layout.addWidget(left_panel, 30)  # 左侧占30%宽度
         main_layout.addWidget(right_panel, 70) # 右侧占70%宽度
 
+    def get_current_task_id(self):
+        """获取当前任务的唯一标识符"""
+        if self.current_task:
+            # 使用任务在列表中的索引作为唯一标识符
+            try:
+                return self.task_manager.tasks.index(self.current_task)
+            except ValueError:
+                return None
+        return None
+
     def populate_task_tree(self):
-        """填充任务树形控件，按状态分类"""
-        self.task_tree.clear_all_tasks()
+        """填充任务树形控件，按状态分类但保持原顺序"""
+        # 清空所有任务项
+        for i in range(self.task_tree.topLevelItemCount()):
+            category_item = self.task_tree.topLevelItem(i)
+            for j in range(category_item.childCount()):
+                category_item.removeChild(category_item.child(0))
         
-        # 临时存储任务索引，用于排序
-        active_tasks = []
-        completed_tasks = []
-        aborted_tasks = []
-        
-        # 分类任务
+        # 添加任务，保持原有顺序
         for idx, task in enumerate(self.task_manager.tasks):
-            # 检查进度是否为100%，如果是则视为已完成
+            # 确定任务所属的分类
             if task.progress >= 100:
-                completed_tasks.append((idx, task))
+                category = "completed"
             elif task.status == "废止":
-                aborted_tasks.append((idx, task))
+                category = "aborted"
             else:
-                active_tasks.append((idx, task))
-        
-        # 添加活动任务
-        for idx, task in active_tasks:
-            self.task_tree.add_task_item(task, idx, "active")
-        
-        # 添加已完成任务
-        for idx, task in completed_tasks:
-            self.task_tree.add_task_item(task, idx, "completed")
-        
-        # 添加已废止任务
-        for idx, task in aborted_tasks:
-            self.task_tree.add_task_item(task, idx, "aborted")
+                category = "active"
+            
+            # 添加任务项到指定分类
+            self.task_tree.add_task_item(task, idx, category)
 
     # ---------------- 详细信息面板 ----------------
     def init_detail_view(self):
@@ -570,9 +571,12 @@ class ProgressManager(QMainWindow):
         """任务树形控件选中事件：更新详细信息和图表"""
         if 0 <= task_index < len(self.task_manager.tasks):
             self.current_task = self.task_manager.tasks[task_index]
+            self.current_task_id = task_index
+            self.update_detail_view()
         else:
             self.current_task = None
-        self.update_detail_view()
+            self.current_task_id = None
+            self.update_detail_view()
 
     def on_subtask_selected(self):
         """子任务列表选中事件：更新进度登记面板"""
@@ -610,9 +614,20 @@ class ProgressManager(QMainWindow):
 
         # 保存并更新UI
         self.task_manager.save_tasks()
+        
+        # 记住当前任务ID
+        current_task_id = self.get_current_task_id()
+        
+        # 刷新任务树
+        self.populate_task_tree()
+        
+        # 恢复选择
+        if current_task_id is not None:
+            self.task_tree.select_task(current_task_id)
+            self.current_task = self.task_manager.tasks[current_task_id]
+        
+        # 更新详细视图
         self.update_detail_view()
-        self.refresh_task_cards()
-        self.select_current_task_in_tree()
 
     def switch_mode(self, index):
         """切换显示模式（详细信息/图表）"""
@@ -979,13 +994,24 @@ class ProgressManager(QMainWindow):
         new_idx = idx + direction
         if new_idx < 0 or new_idx >= len(self.task_manager.tasks):
             return
+        
         # 交换位置
         self.task_manager.tasks[idx], self.task_manager.tasks[new_idx] = self.task_manager.tasks[new_idx], self.task_manager.tasks[idx]
         self.task_manager.save_tasks()
+        
+        # 记住移动后任务索引
+        current_task_id = new_idx
+        
+        # 刷新任务树
         self.populate_task_tree()
-        # 重新选中任务
-        self.current_task = self.task_manager.tasks[new_idx]
-        self.select_current_task_in_tree()
+        
+        # 恢复选择
+        if current_task_id is not None:
+            self.task_tree.select_task(current_task_id)
+            self.current_task = self.task_manager.tasks[current_task_id]
+        
+        # 更新详细视图
+        self.update_detail_view()
 
     def change_task_status(self, task: Task, status: str):
         """修改任务状态"""
@@ -993,10 +1019,21 @@ class ProgressManager(QMainWindow):
         if task.progress >= 100:
             QMessageBox.information(self, "提示", "任务已完成，无法修改状态")
             return
-            
+        
+        # 记住当前任务ID
+        current_task_id = self.get_current_task_id()
+        
         task.status = status
         self.task_manager.save_tasks()
+        
+        # 刷新任务树
         self.populate_task_tree()
+        
+        # 恢复选择
+        if current_task_id is not None:
+            self.task_tree.select_task(current_task_id)
+            self.current_task = self.task_manager.tasks[current_task_id]
+        
         if task == self.current_task:
             self.update_detail_view()
 
@@ -1004,9 +1041,20 @@ class ProgressManager(QMainWindow):
         """重命名任务"""
         new_name, ok = QInputDialog.getText(self, "重命名任务", "输入新任务名称:", text=task.name)
         if ok and new_name.strip():
+            # 记住当前任务ID
+            current_task_id = self.get_current_task_id()
+            
             task.name = new_name.strip()
             self.task_manager.save_tasks()
+            
+            # 刷新任务树
             self.populate_task_tree()
+            
+            # 恢复选择
+            if current_task_id is not None:
+                self.task_tree.select_task(current_task_id)
+                self.current_task = self.task_manager.tasks[current_task_id]
+            
             if task == self.current_task:
                 self.update_detail_view()
 
@@ -1016,7 +1064,7 @@ class ProgressManager(QMainWindow):
         if task.progress >= 100:
             QMessageBox.information(self, "提示", "任务已完成，无法添加子任务")
             return
-            
+        
         # 输入子任务名称
         name, ok = QInputDialog.getText(self, "添加子任务", "输入子任务名称:")
         if not (ok and name.strip()):
@@ -1025,9 +1073,22 @@ class ProgressManager(QMainWindow):
         total, ok = QInputDialog.getInt(self, "设置子任务总量", "输入任务总量:", value=100, min=1)
         if not ok:
             return
+        
+        # 记住当前任务ID
+        current_task_id = self.get_current_task_id()
+        
         # 添加子任务
         task.add_subtask(SubTask(name.strip(), total))
         self.task_manager.save_tasks()
+        
+        # 刷新任务树
+        self.populate_task_tree()
+        
+        # 恢复选择
+        if current_task_id is not None:
+            self.task_tree.select_task(current_task_id)
+            self.current_task = self.task_manager.tasks[current_task_id]
+        
         if task == self.current_task:
             self.update_detail_view()
 
@@ -1038,12 +1099,33 @@ class ProgressManager(QMainWindow):
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
+            # 检查删除的是否是当前任务
+            is_current = (task == self.current_task)
+            
+            # 删除任务
             self.task_manager.tasks.remove(task)
             self.task_manager.save_tasks()
+            
+            # 刷新任务树
             self.populate_task_tree()
-            if task == self.current_task:
+            
+            if is_current:
+                # 如果删除的是当前任务，清空详细视图
                 self.current_task = None
+                self.current_task_id = None
                 self.update_detail_view()
+            else:
+                # 否则，重新选中当前任务（因为索引可能改变，所以需要重新查找）
+                if self.current_task:
+                    # 重新获取当前任务在列表中的索引
+                    try:
+                        index = self.task_manager.tasks.index(self.current_task)
+                        self.task_tree.select_task(index)
+                    except ValueError:
+                        # 如果当前任务不在列表中（这不应该发生，除非有bug），清空
+                        self.current_task = None
+                        self.current_task_id = None
+                        self.update_detail_view()
 
     def move_subtask(self, idx, direction):
         """移动子任务位置（direction: -1=上移，1=下移）"""
@@ -1107,9 +1189,27 @@ class ProgressManager(QMainWindow):
         """添加新任务"""
         name, ok = QInputDialog.getText(self, "添加新任务", "输入任务名称:")
         if ok and name.strip():
-            self.task_manager.tasks.append(Task(name.strip()))
+            # 创建新任务
+            new_task = Task(name.strip())
+            self.task_manager.tasks.append(new_task)
             self.task_manager.save_tasks()
+            
+            # 设置当前任务为新任务
+            self.current_task = new_task
+            
+            # 记住当前任务ID
+            current_task_id = len(self.task_manager.tasks) - 1
+            
+            # 刷新任务树
             self.populate_task_tree()
+            
+            # 选择新任务
+            if current_task_id is not None:
+                self.task_tree.select_task(current_task_id)
+                self.current_task = self.task_manager.tasks[current_task_id]
+            
+            # 更新详细视图
+            self.update_detail_view()
 
     def show_today_summary(self):
         """显示今日任务更新总结"""
@@ -1214,8 +1314,17 @@ class ProgressManager(QMainWindow):
             Task.RECENT_X = new_x  # 立即生效
             self.recent_x = new_x
 
-            # 刷新UI
+            # 记住当前任务ID
+            current_task_id = self.get_current_task_id()
+            
+            # 刷新任务树
             self.populate_task_tree()
+            
+            # 恢复选择
+            if current_task_id is not None:
+                self.task_tree.select_task(current_task_id)
+                self.current_task = self.task_manager.tasks[current_task_id]
+            
             if self.current_task:
                 self.update_detail_view()
                 self.select_current_task_in_tree()
@@ -1230,7 +1339,29 @@ class ProgressManager(QMainWindow):
 
     def refresh_task_cards(self):
         """刷新所有任务卡片数据"""
+        # 在刷新前记住当前选中的任务
+        current_task_id = self.get_current_task_id()
+        
+        # 刷新任务树
         self.populate_task_tree()
+        
+        # 恢复选择
+        if current_task_id is not None and 0 <= current_task_id < len(self.task_manager.tasks):
+            # 恢复当前任务对象
+            self.current_task = self.task_manager.tasks[current_task_id]
+            # 在树中选择对应的项
+            self.task_tree.select_task(current_task_id)
+            # 更新详细视图
+            self.update_detail_view()
+        elif self.task_manager.tasks:
+            # 如果没有之前的选择但有任务，选择第一个
+            self.task_tree.select_task(0)
+            self.current_task = self.task_manager.tasks[0]
+            self.update_detail_view()
+        else:
+            # 没有任务时清空
+            self.current_task = None
+            self.update_detail_view()
 
     def select_current_task_in_tree(self):
         """在任务树中选中当前任务"""
